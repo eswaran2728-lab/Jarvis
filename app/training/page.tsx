@@ -13,9 +13,9 @@ export default function TrainingPage() {
           <p className="text-slate-400 text-sm mt-1">Real-time pose detection with AI feedback</p>
         </div>
 
-        <div className="mb-4 glass rounded-2xl border border-jarvis-border p-4">
+        <div className="mb-4 glass rounded-2xl border border-orion-border p-4">
           <p className="text-xs text-slate-300 leading-relaxed">
-            <span className="text-jarvis-blue font-semibold">Sir, training mode is ready.</span> Stand in front of your camera. I will analyze your stance, balance, and posture in real time.
+            <span className="text-orion-blue font-semibold">Sir, ORION training analysis is ready.</span> Stand in front of your camera. I will analyze your stance, balance, and posture in real time.
           </p>
         </div>
 

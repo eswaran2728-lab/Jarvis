@@ -32,7 +32,7 @@ export interface Skill {
 
 export interface ChatMessage {
   id: string
-  role: 'user' | 'jarvis'
+  role: 'user' | 'orion'
   content: string
   timestamp: string
 }

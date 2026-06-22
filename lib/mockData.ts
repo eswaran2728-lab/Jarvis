@@ -33,18 +33,20 @@ export const mockSkills: Skill[] = [
 ]
 
 export const mockChatMessages: ChatMessage[] = [
-  { id: '1', role: 'jarvis', content: 'Good morning, sir. I am JARVIS, your AI training assistant. How may I assist you today?', timestamp: '2026-06-22T06:00:00' },
+  { id: '1', role: 'orion', content: 'Sir, ORION is online. I am your Personal AI Command Center — Optimized Real-time Intelligent Operations Network. How may I assist you today?', timestamp: '2026-06-22T06:00:00' },
   { id: '2', role: 'user', content: 'What should I focus on today?', timestamp: '2026-06-22T06:01:00' },
-  { id: '3', role: 'jarvis', content: 'Sir, based on your recent sessions, I recommend focusing on footwork and balance today. Your last session showed a score of 78. Strengthening your stance foundation will help you progress further.', timestamp: '2026-06-22T06:01:05' },
+  { id: '3', role: 'orion', content: 'Sir, based on your recent sessions, I recommend focusing on footwork and balance today. Your last session showed a score of 78. Strengthening your stance foundation will help you progress further.', timestamp: '2026-06-22T06:01:05' },
 ]
 
-export const jarvisResponses = [
-  'Sir, I have analyzed your request. Based on your training data, I recommend focusing on balance exercises.',
-  'Understood, sir. Your recent sessions show improvement in stance. Keep up the excellent work.',
-  'Sir, your training consistency is commendable. I suggest adding 10 minutes of footwork drills today.',
+export const orionResponses = [
+  'Sir, ORION has analyzed your request. Based on your training data, I recommend focusing on balance exercises today.',
+  'Understood, sir. Your recent sessions show consistent improvement in stance. Keep up the excellent work.',
+  'Sir, your training consistency is commendable. ORION suggests adding 10 minutes of footwork drills today.',
   'Noted, sir. I will add that to your schedule immediately.',
-  'Sir, your posture analysis indicates room for improvement in shoulder alignment. I recommend specific exercises.',
-  'Excellent question, sir. The key to Silambam mastery is consistent practice and proper form.',
-  'Sir, I detect you may benefit from a rest day. Recovery is equally important as training.',
-  'Affirmative, sir. Silambam is a traditional Indian martial art from Tamil Nadu. Its techniques build excellent body coordination.',
+  'Sir, your posture analysis indicates room for improvement in shoulder alignment. ORION recommends targeted exercises.',
+  'Excellent question, sir. The key to Silambam mastery is consistent practice and disciplined form.',
+  'Sir, ORION detects you may benefit from a rest day. Recovery is equally important as active training.',
+  'Affirmative, sir. Silambam is a traditional Indian martial art from Tamil Nadu. Its techniques build excellent body coordination and balance.',
+  'Sir, your stance balance is currently 72%. I recommend widening your left foot slightly for improved stability.',
+  'Sir, training analysis is ready. Please stand in front of your camera when you are prepared to begin.',
 ]

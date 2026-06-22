@@ -33,7 +33,7 @@ export default function VoiceCommandButton() {
     else if (text.includes('silambam')) router.push('/training/silambam')
     else if (text.includes('tasks') || text.includes('show tasks')) router.push('/tasks')
     else if (text.includes('reminders')) router.push('/reminders')
-    else if (text.includes('jarvis') || text.includes('ask jarvis')) router.push('/assistant')
+    else if (text.includes('orion') || text.includes('ask orion')) router.push('/assistant')
     setTimeout(() => setTranscript(''), 3000)
   }
 
@@ -63,7 +63,7 @@ export default function VoiceCommandButton() {
         className={`p-4 rounded-full transition-all border-2 ${
           listening
             ? 'bg-green-500/20 border-green-400 text-green-400 animate-pulse'
-            : 'bg-jarvis-blue/10 border-jarvis-blue/50 text-jarvis-blue hover:bg-jarvis-blue/20'
+            : 'bg-orion-blue/10 border-orion-blue/50 text-orion-blue hover:bg-orion-blue/20'
         }`}
       >
         {listening ? <Mic size={24} /> : <MicOff size={24} />}
@@ -72,7 +72,7 @@ export default function VoiceCommandButton() {
         {listening ? 'Listening...' : 'Voice Command'}
       </span>
       {transcript && (
-        <div className="text-xs text-jarvis-blue bg-jarvis-blue/10 rounded px-3 py-1 border border-jarvis-blue/30">
+        <div className="text-xs text-orion-blue bg-orion-blue/10 rounded px-3 py-1 border border-orion-blue/30">
           &quot;{transcript}&quot;
         </div>
       )}

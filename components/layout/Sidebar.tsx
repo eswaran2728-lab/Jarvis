@@ -17,11 +17,15 @@ const navItems = [
 export default function Sidebar() {
   const pathname = usePathname()
   return (
-    <aside className="hidden lg:flex flex-col w-64 min-h-screen glass border-r border-jarvis-border p-6">
+    <aside className="hidden lg:flex flex-col w-64 min-h-screen glass border-r border-orion-border p-6">
       <div className="mb-8">
-        <div className="text-jarvis-blue text-2xl font-bold glow-text tracking-widest">ESWA</div>
-        <div className="text-white text-3xl font-black tracking-widest">JARVIS</div>
-        <div className="text-slate-400 text-xs mt-1">AI Training Assistant</div>
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-2 h-2 rounded-full bg-orion-blue animate-pulse" />
+          <span className="text-orion-blue text-xs font-semibold tracking-widest uppercase">Online</span>
+        </div>
+        <div className="text-orion-blue text-3xl font-black glow-text tracking-widest leading-none">ORION</div>
+        <div className="text-white text-xl font-bold tracking-widest">AI</div>
+        <div className="text-slate-500 text-xs mt-1 leading-relaxed">Your Personal AI<br />Command Center</div>
       </div>
       <nav className="flex flex-col gap-1 flex-1">
         {navItems.map(({ href, icon: Icon, label }) => {
@@ -32,8 +36,8 @@ export default function Sidebar() {
               href={href}
               className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
                 active
-                  ? 'bg-jarvis-blue/20 text-jarvis-blue border border-jarvis-blue/30 glow-blue'
-                  : 'text-slate-400 hover:text-jarvis-blue hover:bg-white/5'
+                  ? 'bg-orion-blue/20 text-orion-blue border border-orion-blue/30 glow-blue'
+                  : 'text-slate-400 hover:text-orion-blue hover:bg-white/5'
               }`}
             >
               <Icon size={18} />
@@ -42,8 +46,8 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      <div className="mt-auto text-xs text-slate-500 text-center pt-4 border-t border-jarvis-border">
-        JARVIS v1.0 · Safe Training Only
+      <div className="mt-auto text-xs text-slate-500 text-center pt-4 border-t border-orion-border">
+        ORION AI v1.0 · Safe Training Only
       </div>
     </aside>
   )

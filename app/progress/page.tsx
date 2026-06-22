@@ -16,21 +16,21 @@ export default function ProgressPage() {
 
         {/* Overview */}
         <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="glass rounded-xl border border-jarvis-border p-4 text-center">
+          <div className="glass rounded-xl border border-orion-border p-4 text-center">
             <div className="text-3xl font-bold text-green-400">{best}</div>
             <div className="text-xs text-slate-400 mt-1">Best Score</div>
           </div>
-          <div className="glass rounded-xl border border-jarvis-border p-4 text-center">
-            <div className="text-3xl font-bold text-jarvis-blue">{avg}</div>
+          <div className="glass rounded-xl border border-orion-border p-4 text-center">
+            <div className="text-3xl font-bold text-orion-blue">{avg}</div>
             <div className="text-xs text-slate-400 mt-1">Average Score</div>
           </div>
         </div>
 
         {/* Score history */}
-        <div className="glass rounded-2xl border border-jarvis-border p-4 mb-6">
-          <h2 className="text-xs text-jarvis-blue uppercase tracking-widest mb-4">Session History</h2>
+        <div className="glass rounded-2xl border border-orion-border p-4 mb-6">
+          <h2 className="text-xs text-orion-blue uppercase tracking-widest mb-4">Session History</h2>
           {mockTrainingSessions.map(session => (
-            <div key={session.id} className="flex items-center gap-4 py-3 border-b border-jarvis-border last:border-0">
+            <div key={session.id} className="flex items-center gap-4 py-3 border-b border-orion-border last:border-0">
               <div className={`text-xl font-bold w-12 text-center ${session.score >= 80 ? 'text-green-400' : session.score >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>
                 {session.score}
               </div>
@@ -40,7 +40,7 @@ export default function ProgressPage() {
                 <div className="text-xs text-slate-500 mt-0.5">{session.feedback[0]}</div>
               </div>
               {/* Mini score bar */}
-              <div className="w-20 h-2 bg-jarvis-border rounded-full overflow-hidden">
+              <div className="w-20 h-2 bg-orion-border rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full"
                   style={{
@@ -55,7 +55,7 @@ export default function ProgressPage() {
 
         {/* Skills */}
         <div className="mb-6">
-          <h2 className="text-xs text-jarvis-blue uppercase tracking-widest mb-4">Skill Progress</h2>
+          <h2 className="text-xs text-orion-blue uppercase tracking-widest mb-4">Skill Progress</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {mockSkills.map(skill => <ProgressCard key={skill.id} skill={skill} />)}
           </div>

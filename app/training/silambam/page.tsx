@@ -107,14 +107,14 @@ export default function SilambamPage() {
     <AppShell>
       <div className="p-4 md:p-6 max-w-2xl mx-auto w-full">
         <div className="mb-6">
-          <div className="text-jarvis-blue text-xs uppercase tracking-widest mb-1">Training Mode</div>
+          <div className="text-orion-blue text-xs uppercase tracking-widest mb-1">Training Mode</div>
           <h1 className="text-2xl font-bold text-white">Silambam Coach</h1>
           <p className="text-slate-400 text-sm mt-1">Traditional Tamil martial art training guide</p>
         </div>
 
-        <div className="glass rounded-2xl border border-jarvis-blue/30 p-4 mb-6">
+        <div className="glass rounded-2xl border border-orion-blue/30 p-4 mb-6">
           <p className="text-sm text-slate-300 leading-relaxed">
-            <span className="text-jarvis-blue font-semibold">Sir, Silambam coach is ready.</span> Silambam is a traditional martial art from Tamil Nadu, India. Practice each skill category below with focus and discipline. Tap any category to expand detailed instructions.
+            <span className="text-orion-blue font-semibold">Sir, ORION Silambam coach is ready.</span> Silambam is a traditional martial art from Tamil Nadu, India. Practice each skill category below with focus and discipline. Tap any category to expand detailed instructions.
           </p>
         </div>
 

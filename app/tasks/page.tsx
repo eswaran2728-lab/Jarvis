@@ -44,13 +44,13 @@ export default function TasksPage() {
         </div>
 
         {/* Add task */}
-        <div className="glass rounded-2xl border border-jarvis-border p-4 mb-6 space-y-3">
+        <div className="glass rounded-2xl border border-orion-border p-4 mb-6 space-y-3">
           <input
             value={newTitle}
             onChange={e => setNewTitle(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addTask()}
             placeholder="Add a new task..."
-            className="w-full bg-jarvis-navy border border-jarvis-border rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-jarvis-blue/50"
+            className="w-full bg-orion-navy border border-orion-border rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-orion-blue/50"
           />
           <div className="flex gap-2 items-center">
             {(['low', 'medium', 'high'] as const).map(p => (
@@ -62,7 +62,7 @@ export default function TasksPage() {
                     ? p === 'high' ? 'bg-red-400/20 border-red-400 text-red-400'
                     : p === 'medium' ? 'bg-yellow-400/20 border-yellow-400 text-yellow-400'
                     : 'bg-green-400/20 border-green-400 text-green-400'
-                    : 'border-jarvis-border text-slate-500'
+                    : 'border-orion-border text-slate-500'
                 }`}
               >
                 {p}
@@ -70,7 +70,7 @@ export default function TasksPage() {
             ))}
             <button
               onClick={addTask}
-              className="ml-auto flex items-center gap-1 px-4 py-1.5 rounded-xl bg-jarvis-blue/20 border border-jarvis-blue/40 text-jarvis-blue text-sm hover:bg-jarvis-blue/30 transition-colors"
+              className="ml-auto flex items-center gap-1 px-4 py-1.5 rounded-xl bg-orion-blue/20 border border-orion-blue/40 text-orion-blue text-sm hover:bg-orion-blue/30 transition-colors"
             >
               <Plus size={16} /> Add
             </button>
@@ -80,7 +80,7 @@ export default function TasksPage() {
         {/* Pending tasks */}
         {pending.length > 0 && (
           <div className="mb-6 space-y-2">
-            <p className="text-xs text-jarvis-blue uppercase tracking-widest mb-3">Pending ({pending.length})</p>
+            <p className="text-xs text-orion-blue uppercase tracking-widest mb-3">Pending ({pending.length})</p>
             {pending.map(t => <TaskCard key={t.id} task={t} onToggle={toggleTask} onDelete={deleteTask} />)}
           </div>
         )}

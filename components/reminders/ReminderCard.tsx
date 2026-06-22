@@ -10,15 +10,15 @@ interface Props {
 }
 
 const statusColors = {
-  pending: 'text-jarvis-blue bg-jarvis-blue/10',
+  pending: 'text-orion-blue bg-orion-blue/10',
   done: 'text-green-400 bg-green-400/10',
   missed: 'text-red-400 bg-red-400/10',
 }
 
 export default function ReminderCard({ reminder, onMarkDone, onDelete }: Props) {
   return (
-    <div className="glass rounded-xl border border-jarvis-border p-4 flex items-center gap-3">
-      <Bell size={18} className={reminder.status === 'done' ? 'text-green-400' : 'text-jarvis-blue'} />
+    <div className="glass rounded-xl border border-orion-border p-4 flex items-center gap-3">
+      <Bell size={18} className={reminder.status === 'done' ? 'text-green-400' : 'text-orion-blue'} />
       <div className="flex-1 min-w-0">
         <p className="text-sm text-white">{reminder.title}</p>
         <p className="text-xs text-slate-400">{formatDate(reminder.datetime)} · {formatTime(reminder.datetime)}</p>

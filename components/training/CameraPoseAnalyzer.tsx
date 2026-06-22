@@ -104,7 +104,7 @@ export default function CameraPoseAnalyzer() {
       )}
 
       {/* Video area */}
-      <div className="relative rounded-2xl overflow-hidden bg-black border border-jarvis-border" style={{ aspectRatio: '4/3' }}>
+      <div className="relative rounded-2xl overflow-hidden bg-black border border-orion-border" style={{ aspectRatio: '4/3' }}>
         <video
           ref={videoRef}
           className="w-full h-full object-cover"
@@ -127,8 +127,8 @@ export default function CameraPoseAnalyzer() {
         )}
         {loading && (
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
-            <Loader size={32} className="text-jarvis-blue animate-spin" />
-            <p className="text-jarvis-blue text-sm">Loading...</p>
+            <Loader size={32} className="text-orion-blue animate-spin" />
+            <p className="text-orion-blue text-sm">Loading...</p>
           </div>
         )}
       </div>
@@ -136,7 +136,7 @@ export default function CameraPoseAnalyzer() {
       {/* Controls */}
       <div className="flex gap-3 flex-wrap">
         {!stream ? (
-          <button onClick={startCamera} disabled={loading} className="flex items-center gap-2 px-5 py-3 rounded-xl bg-jarvis-blue/20 border border-jarvis-blue/40 text-jarvis-blue hover:bg-jarvis-blue/30 transition-colors text-sm font-medium">
+          <button onClick={startCamera} disabled={loading} className="flex items-center gap-2 px-5 py-3 rounded-xl bg-orion-blue/20 border border-orion-blue/40 text-orion-blue hover:bg-orion-blue/30 transition-colors text-sm font-medium">
             <Camera size={18} /> Start Camera
           </button>
         ) : (

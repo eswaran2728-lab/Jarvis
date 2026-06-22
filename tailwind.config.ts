@@ -9,11 +9,11 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        'jarvis-blue': '#00d4ff',
-        'jarvis-navy': '#0a0e1a',
-        'jarvis-dark': '#050810',
-        'jarvis-card': '#0d1526',
-        'jarvis-border': '#1a2540',
+        'orion-blue': '#00d4ff',
+        'orion-navy': '#0a0e1a',
+        'orion-dark': '#050810',
+        'orion-card': '#0d1526',
+        'orion-border': '#1a2540',
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',

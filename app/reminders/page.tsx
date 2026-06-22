@@ -41,23 +41,23 @@ export default function RemindersPage() {
         </div>
 
         {/* Add reminder */}
-        <div className="glass rounded-2xl border border-jarvis-border p-4 mb-6 space-y-3">
+        <div className="glass rounded-2xl border border-orion-border p-4 mb-6 space-y-3">
           <input
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Reminder title..."
-            className="w-full bg-jarvis-navy border border-jarvis-border rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-jarvis-blue/50"
+            className="w-full bg-orion-navy border border-orion-border rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-orion-blue/50"
           />
           <div className="flex gap-2">
             <input
               type="datetime-local"
               value={datetime}
               onChange={e => setDatetime(e.target.value)}
-              className="flex-1 bg-jarvis-navy border border-jarvis-border rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-jarvis-blue/50"
+              className="flex-1 bg-orion-navy border border-orion-border rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-orion-blue/50"
             />
             <button
               onClick={addReminder}
-              className="flex items-center gap-1 px-4 py-3 rounded-xl bg-jarvis-blue/20 border border-jarvis-blue/40 text-jarvis-blue text-sm hover:bg-jarvis-blue/30 transition-colors"
+              className="flex items-center gap-1 px-4 py-3 rounded-xl bg-orion-blue/20 border border-orion-blue/40 text-orion-blue text-sm hover:bg-orion-blue/30 transition-colors"
             >
               <Plus size={16} /> Add
             </button>

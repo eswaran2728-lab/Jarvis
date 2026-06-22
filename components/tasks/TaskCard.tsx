@@ -12,11 +12,11 @@ const priorityColors = { low: 'text-green-400 bg-green-400/10', medium: 'text-ye
 
 export default function TaskCard({ task, onToggle, onDelete }: Props) {
   return (
-    <div className={`glass rounded-xl border border-jarvis-border p-4 flex items-center gap-3 transition-all ${task.completed ? 'opacity-50' : ''}`}>
+    <div className={`glass rounded-xl border border-orion-border p-4 flex items-center gap-3 transition-all ${task.completed ? 'opacity-50' : ''}`}>
       <button
         onClick={() => onToggle(task.id)}
         className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-          task.completed ? 'bg-green-400 border-green-400' : 'border-slate-500 hover:border-jarvis-blue'
+          task.completed ? 'bg-green-400 border-green-400' : 'border-slate-500 hover:border-orion-blue'
         }`}
       >
         {task.completed && <Check size={12} className="text-white" />}

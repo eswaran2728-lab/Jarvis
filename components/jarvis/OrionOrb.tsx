@@ -1,12 +1,12 @@
 'use client'
 import { useState, useEffect } from 'react'
 
-interface JarvisOrbProps {
+interface OrionOrbProps {
   size?: 'sm' | 'md' | 'lg'
   status?: 'idle' | 'listening' | 'processing' | 'speaking'
 }
 
-export default function JarvisOrb({ size = 'md', status = 'idle' }: JarvisOrbProps) {
+export default function OrionOrb({ size = 'md', status = 'idle' }: OrionOrbProps) {
   const [tick, setTick] = useState(0)
   useEffect(() => {
     const id = setInterval(() => setTick(t => t + 1), 100)

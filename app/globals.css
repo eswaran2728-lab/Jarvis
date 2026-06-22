@@ -3,9 +3,9 @@
 @tailwind utilities;
 
 :root {
-  --jarvis-blue: #00d4ff;
-  --jarvis-navy: #0a0e1a;
-  --jarvis-dark: #050810;
+  --orion-blue: #00d4ff;
+  --orion-navy: #0a0e1a;
+  --orion-dark: #050810;
 }
 
 * {
