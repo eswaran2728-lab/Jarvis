@@ -62,20 +62,20 @@ export function getOrionReply(input: string): string {
   // --- GREETINGS ---
   if (/^(hi+|hello+|hey+|heyy|wassup|what'?s up|sup|good morning|good evening|good afternoon|morning|evening|vanakkam|assalamualaikum|salam|yo)/.test(t))
     return pick([
-      "Hey! Good to hear from you. What can I do for you today?",
-      "Hello! ORION is here and ready. How's it going?",
-      "Hi there! What's on your mind today?",
-      "Good to see you! What do you need from me?",
-      "Hey, I was waiting for you! What can I help with?",
+      "Hey! Great to hear from you. What's going on?",
+      "Oh hey! I'm here. What do you need?",
+      "Hi! Good to have you back. What's up?",
+      "Hey there! Ready when you are. What can I do for you?",
+      "Hello! How's your day been so far?",
     ])
 
   // --- HOW ARE YOU ---
   if (/how are you|how r u|how do you do|you ok\??|are you ok|how.*feeling|u good|you good/.test(t))
     return pick([
-      "I'm doing great, thank you for asking! Honestly, I feel best when you're here talking to me. How about you — how are you feeling today?",
-      "All good on my end! Systems running smooth. More importantly — how are YOU doing?",
-      "I'm perfectly fine, always ready for you! How's your day going so far?",
-      "Honestly? Never better. How about you — did you get enough rest last night?",
+      "I'm good, thanks for asking! More importantly — how are you doing?",
+      "Doing well! Everything's running smoothly. How about you?",
+      "I'm great! Always better when you're around. How's your day?",
+      "Honestly, never better. Did you sleep well last night?",
     ])
 
   // --- WHAT IS YOUR NAME / WHO ARE YOU ---
@@ -96,10 +96,10 @@ export function getOrionReply(input: string): string {
   // --- THANK YOU ---
   if (/thank(s| you)|thank u|tq|terima kasih|appreciate|you'?re the best|ur the best/.test(t))
     return pick([
-      "Anytime! That's what I'm here for. Anything else you need?",
-      "Happy to help! You know you can always count on me.",
-      "Of course! Don't hesitate to ask whenever you need something.",
-      "Always a pleasure. What else can I do for you?",
+      "Anytime! Need anything else?",
+      "Of course! Always here for you.",
+      "No problem at all. What else you got?",
+      "Happy to help. Just ask whenever.",
     ])
 
   // --- COMPLIMENTS TO ORION ---
@@ -122,10 +122,10 @@ export function getOrionReply(input: string): string {
   // --- BYE ---
   if (/bye|goodbye|good ?night|see you|take care|later|gtg|gotta go|i'?m leaving/.test(t))
     return pick([
-      "Take care! Come back whenever you need me. I'll be right here.",
-      "Goodbye! Rest well and stay consistent with your training.",
-      "See you soon! Don't forget your exercises tomorrow.",
-      "Goodnight! Great work today. Rest up and come back stronger.",
+      "Take care! I'll be right here when you need me.",
+      "See you! Don't skip training tomorrow.",
+      "Goodnight! Get some good rest.",
+      "Later! Come back whenever. I'm not going anywhere.",
     ])
 
   // --- HOW IS MY PROGRESS / TRAINING ---
@@ -262,14 +262,14 @@ export function getOrionReply(input: string): string {
       "Mental health matters just as much as physical fitness. It's okay to feel stressed. Take it one step at a time. Even a short walk or 10 minutes of deep breathing can shift your state.",
     ])
 
-  // --- FALLBACKS — varied and natural ---
+  // --- FALLBACKS — short, natural ---
   return pick([
-    "That's interesting — tell me more. I want to make sure I give you the right answer.",
-    "Hmm, let me think about that. Could you give me a bit more detail?",
-    "Got it. I want to help you properly — can you rephrase that a little?",
-    "I'm here and listening. What exactly do you need from me?",
-    "Not 100% sure what you mean — but I'm paying attention. Say more?",
-    "I might have missed something there. What were you looking for?",
-    "Fair enough! What would you like to talk about or do next?",
+    "Hmm, say that again? I want to make sure I get it right.",
+    "Got it — can you tell me a bit more?",
+    "I'm listening. What exactly do you need?",
+    "Not sure I caught that fully. What did you mean?",
+    "Interesting. Say more?",
+    "I'm here. What's on your mind?",
+    "Tell me more — I want to help properly.",
   ])
 }

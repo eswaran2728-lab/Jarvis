@@ -95,9 +95,20 @@ export default function AssistantPage() {
         window.speechSynthesis.cancel()
 
         const u = new SpeechSynthesisUtterance(reply)
-        u.rate   = 0.92
-        u.pitch  = 0.85
+        u.rate   = 1.05   // slightly faster = more natural
+        u.pitch  = 1.0    // natural pitch
         u.volume = 1
+
+        // Pick a natural-sounding voice if available
+        const voices = window.speechSynthesis.getVoices()
+        const preferred = voices.find(v =>
+          v.name.includes('Google UK English Male') ||
+          v.name.includes('Daniel') ||
+          v.name.includes('Alex') ||
+          v.name.includes('en-GB') ||
+          (v.lang.startsWith('en') && !v.name.includes('Google'))
+        )
+        if (preferred) u.voice = preferred
 
         u.onend = () => {
           isSpeaking.current = false
