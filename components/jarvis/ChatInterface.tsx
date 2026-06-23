@@ -48,9 +48,9 @@ export default function ChatInterface() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-4 min-h-0">
         {messages.map(msg => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'orion' && (
