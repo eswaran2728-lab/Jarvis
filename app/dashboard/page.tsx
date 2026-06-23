@@ -5,7 +5,7 @@ import DashboardCard from '@/components/dashboard/DashboardCard'
 import OrionOrb from '@/components/jarvis/OrionOrb'
 import VoiceCommandButton from '@/components/jarvis/VoiceCommandButton'
 import { mockTasks, mockReminders, mockTrainingSessions } from '@/lib/mockData'
-import { Camera, MessageCircle, Bell, Calendar, Swords, TrendingUp } from 'lucide-react'
+import { Camera, MessageCircle, Bell, Calendar, Swords, TrendingUp, Video, ClipboardList } from 'lucide-react'
 
 const quickActions = [
   { label: 'Start Training', href: '/training', icon: Camera, color: 'text-green-400 bg-green-400/10 border-green-400/30' },
@@ -14,6 +14,8 @@ const quickActions = [
   { label: 'Daily Plan', href: '/tasks', icon: Calendar, color: 'text-purple-400 bg-purple-400/10 border-purple-400/30' },
   { label: 'Silambam', href: '/training/silambam', icon: Swords, color: 'text-orange-400 bg-orange-400/10 border-orange-400/30' },
   { label: 'Progress', href: '/progress', icon: TrendingUp, color: 'text-pink-400 bg-pink-400/10 border-pink-400/30' },
+  { label: 'Video Analysis', href: '/training/video', icon: Video, color: 'text-cyan-400 bg-cyan-400/10 border-cyan-400/30' },
+  { label: 'Athlete Plan', href: '/training/plan', icon: ClipboardList, color: 'text-violet-400 bg-violet-400/10 border-violet-400/30' },
 ]
 
 export default function DashboardPage() {
@@ -64,7 +66,7 @@ export default function DashboardPage() {
 
         {/* Quick Actions */}
         <DashboardCard title="Quick Actions" className="mb-6">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 lg:grid-cols-4 gap-3">
             {quickActions.map(({ label, href, icon: Icon, color }) => (
               <Link key={href} href={href}
                 className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all hover:scale-105 ${color}`}
