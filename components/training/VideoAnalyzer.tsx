@@ -174,26 +174,49 @@ export default function VideoAnalyzer() {
     <div className="space-y-6">
       {/* Upload area */}
       {!videoSrc ? (
-        <div
-          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all ${
-            isDragOver ? 'border-orion-blue bg-orion-blue/10' : 'border-orion-border hover:border-orion-blue/50 hover:bg-white/5'
-          }`}
-        >
-          <Upload size={48} className="mx-auto mb-4 text-orion-blue" />
-          <p className="text-white font-semibold text-lg mb-2">Upload Training Video</p>
-          <p className="text-slate-400 text-sm">Drag and drop or click to select</p>
-          <p className="text-slate-500 text-xs mt-2">MP4, MOV, WebM supported</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,video/quicktime,video/webm"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-          />
+        <div className="space-y-4">
+          {/* Big tap-to-upload button */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`border-2 border-dashed rounded-3xl cursor-pointer transition-all active:scale-95 ${
+              isDragOver
+                ? 'border-orion-blue bg-orion-blue/15'
+                : 'border-orion-blue/50 bg-orion-blue/5 hover:border-orion-blue hover:bg-orion-blue/10'
+            }`}
+            style={{ minHeight: 280 }}
+          >
+            <div className="flex flex-col items-center justify-center h-full py-16 px-6 text-center">
+              {/* Icon */}
+              <div className="w-24 h-24 rounded-full bg-orion-blue/15 border-2 border-orion-blue/40 flex items-center justify-center mb-6">
+                <Upload size={40} className="text-orion-blue" />
+              </div>
+              <p className="text-white font-bold text-xl mb-2">Tap to Upload Video</p>
+              <p className="text-slate-400 text-sm mb-1">Or drag and drop your file here</p>
+              <p className="text-slate-500 text-xs">MP4 · MOV · WebM</p>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/mp4,video/quicktime,video/webm"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+            />
+          </div>
+
+          {/* Explicit button for mobile */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-4 rounded-2xl bg-orion-blue text-white font-bold text-base hover:bg-orion-blue/90 transition-all active:scale-95"
+            style={{ boxShadow: '0 0 20px rgba(0,212,255,0.3)' }}
+          >
+            Choose Video File
+          </button>
+          <p className="text-xs text-slate-500 text-center">
+            Upload your Silambam training video — ORION will analyse your technique
+          </p>
         </div>
       ) : (
         <>
