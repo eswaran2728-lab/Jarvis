@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     cache.set(key, { reply, time: Date.now() })
     if (cache.size > 500) {
       // Clear oldest entries when cache gets large
-      ;[...cache.keys()].slice(0, 100).forEach(k => cache.delete(k))
+      Array.from(cache.keys()).slice(0, 100).forEach(k => cache.delete(k))
     }
 
     return NextResponse.json({ reply })
