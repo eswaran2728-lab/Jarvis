@@ -1,5 +1,6 @@
 'use client'
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import AppShell from '@/components/layout/AppShell'
 import { Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
 import { getOrionReply } from '@/lib/mockData'
@@ -14,162 +15,222 @@ const statusColors: Record<Status, string> = {
 }
 
 const statusLabels: Record<Status, string> = {
-  idle:       'Tap mic to talk',
-  listening:  'Listening — speak now',
-  processing: 'ORION is thinking...',
-  speaking:   'ORION is speaking...',
+  idle:       'Tap mic to start',
+  listening:  'Listening...',
+  processing: 'Thinking...',
+  speaking:   'Speaking...',
+}
+
+// App/URL commands ORION can open
+function handleAppCommand(text: string): { handled: boolean; reply: string; action?: () => void } {
+  const t = text.toLowerCase()
+
+  const appMap: Array<{ keywords: string[]; url: string; name: string }> = [
+    { keywords: ['whatsapp', 'what app', 'whats app'], url: 'https://web.whatsapp.com', name: 'WhatsApp' },
+    { keywords: ['youtube', 'you tube'], url: 'https://youtube.com', name: 'YouTube' },
+    { keywords: ['instagram', 'insta'], url: 'https://instagram.com', name: 'Instagram' },
+    { keywords: ['facebook', 'fb'], url: 'https://facebook.com', name: 'Facebook' },
+    { keywords: ['twitter', 'x app'], url: 'https://twitter.com', name: 'Twitter' },
+    { keywords: ['google'], url: 'https://google.com', name: 'Google' },
+    { keywords: ['maps', 'google maps', 'navigation'], url: 'https://maps.google.com', name: 'Google Maps' },
+    { keywords: ['gmail', 'email'], url: 'https://mail.google.com', name: 'Gmail' },
+    { keywords: ['spotify', 'music'], url: 'https://open.spotify.com', name: 'Spotify' },
+    { keywords: ['netflix'], url: 'https://netflix.com', name: 'Netflix' },
+    { keywords: ['tiktok', 'tik tok'], url: 'https://tiktok.com', name: 'TikTok' },
+    { keywords: ['camera', 'training'], url: '/training', name: 'Training', internal: true } as any,
+    { keywords: ['silambam', 'coach'], url: '/training/silambam', name: 'Silambam Coach', internal: true } as any,
+    { keywords: ['dashboard', 'home'], url: '/dashboard', name: 'Dashboard', internal: true } as any,
+    { keywords: ['task', 'tasks', 'to do'], url: '/tasks', name: 'Tasks', internal: true } as any,
+    { keywords: ['reminder', 'reminders'], url: '/reminders', name: 'Reminders', internal: true } as any,
+    { keywords: ['progress'], url: '/progress', name: 'Progress', internal: true } as any,
+    { keywords: ['settings', 'setting'], url: '/settings', name: 'Settings', internal: true } as any,
+    { keywords: ['athlete plan', 'workout plan', 'training plan'], url: '/training/plan', name: 'Athlete Plan', internal: true } as any,
+    { keywords: ['video analysis', 'video'], url: '/training/video', name: 'Video Analysis', internal: true } as any,
+  ]
+
+  // Must be an "open" command
+  if (!/open|launch|go to|take me|show me|start|load/.test(t)) {
+    return { handled: false, reply: '' }
+  }
+
+  for (const app of appMap) {
+    if (app.keywords.some(k => t.includes(k))) {
+      return {
+        handled: true,
+        reply: `Opening ${app.name} for you!`,
+        action: () => {
+          if ((app as any).internal) {
+            window.location.href = app.url
+          } else {
+            window.open(app.url, '_blank')
+          }
+        },
+      }
+    }
+  }
+
+  return { handled: false, reply: '' }
 }
 
 export default function AssistantPage() {
   const [status, setStatus]         = useState<Status>('idle')
   const [voiceOn, setVoiceOn]       = useState(false)
-  const [muteReply, setMuteReply]   = useState(false)
+  const [muted, setMuted]           = useState(false)
   const [userSaid, setUserSaid]     = useState('')
-  const [orionReply, setOrionReply] = useState('ORION is online. Your Personal AI Command Center is ready. How can I help you?')
+  const [orionReply, setOrionReply] = useState('ORION is online. Tap the mic and talk to me.')
   const [inputText, setInputText]   = useState('')
   const [supported, setSupported]   = useState(false)
 
-  const recRef      = useRef<any>(null)
-  const isSpeaking  = useRef(false)   // true while TTS is running — block mic restarts
-  const wantListen  = useRef(false)   // user wants mic ON
+  const router = useRouter()
 
-  const color = statusColors[status]
+  // Single refs — no closures capturing stale state
+  const recRef       = useRef<any>(null)
+  const statusRef    = useRef<Status>('idle')
+  const voiceOnRef   = useRef(false)
+  const mutedRef     = useRef(false)
+  const timerRef     = useRef<any>(null)
 
-  // Stop mic completely
-  const stopMic = useCallback(() => {
-    try { recRef.current?.abort() } catch {}
-    recRef.current = null
+  const setS = (s: Status) => { statusRef.current = s; setStatus(s) }
+
+  useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
+  useEffect(() => { mutedRef.current = muted }, [muted])
+
+  useEffect(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    setSupported(!!SR)
+    return () => {
+      clearTimeout(timerRef.current)
+      killMic()
+      window.speechSynthesis?.cancel()
+    }
   }, [])
 
-  // Start one listening session
-  const startMic = useCallback(() => {
-    if (!wantListen.current || isSpeaking.current) return
-    if (typeof window === 'undefined') return
+  function killMic() {
+    try { recRef.current?.abort() } catch {}
+    recRef.current = null
+  }
+
+  function startListening() {
+    if (!voiceOnRef.current) return
+    if (statusRef.current === 'processing' || statusRef.current === 'speaking') return
+
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     if (!SR) return
+
+    killMic()
 
     const rec = new SR()
     rec.continuous     = false
     rec.interimResults = false
     rec.lang           = 'en-US'
-    recRef.current     = rec
+    rec.maxAlternatives = 1
+    recRef.current = rec
 
     rec.onresult = (e: any) => {
-      const text = (e.results[0][0].transcript || '').trim()
-      if (!text) return
-      // Stop mic immediately before processing so ORION voice isn't re-captured
-      stopMic()
-      respond(text)
+      const text = (e.results?.[0]?.[0]?.transcript || '').trim()
+      killMic()
+      if (text) processInput(text)
+    }
+
+    rec.onerror = () => {
+      // Silently restart after short delay
+      timerRef.current = setTimeout(() => startListening(), 500)
     }
 
     rec.onend = () => {
-      // Only restart if user wants listening AND ORION is not speaking
-      if (wantListen.current && !isSpeaking.current) {
-        setTimeout(() => startMic(), 350)
+      // Restart only if still in listening state
+      if (statusRef.current === 'listening') {
+        timerRef.current = setTimeout(() => startListening(), 300)
       }
     }
 
-    rec.onerror = (e: any) => {
-      if (e.error === 'no-speech' && wantListen.current && !isSpeaking.current) {
-        setTimeout(() => startMic(), 350)
-      }
+    try { rec.start(); setS('listening') } catch {}
+  }
+
+  function processInput(text: string) {
+    setUserSaid(text)
+    setS('processing')
+
+    // Check app-open commands first
+    const cmd = handleAppCommand(text)
+    if (cmd.handled) {
+      setOrionReply(cmd.reply)
+      speakAndResume(cmd.reply, () => {
+        setTimeout(() => cmd.action?.(), 800)
+      })
+      return
     }
 
-    try { rec.start() } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopMic])
-
-  // ORION replies
-  const respond = useCallback((question: string) => {
-    setStatus('processing')
-    setUserSaid(question)
-
+    // Normal conversation
     setTimeout(() => {
-      const reply = getOrionReply(question)
+      const reply = getOrionReply(text)
       setOrionReply(reply)
+      speakAndResume(reply)
+    }, 600)
+  }
 
-      if (!muteReply && typeof window !== 'undefined' && window.speechSynthesis) {
-        // --- SPEAKING: mic must stay OFF until TTS finishes ---
-        isSpeaking.current = true
-        setStatus('speaking')
-        window.speechSynthesis.cancel()
-
-        const u = new SpeechSynthesisUtterance(reply)
-        u.rate   = 1.05   // slightly faster = more natural
-        u.pitch  = 1.0    // natural pitch
-        u.volume = 1
-
-        // Pick a natural-sounding voice if available
-        const voices = window.speechSynthesis.getVoices()
-        const preferred = voices.find(v =>
-          v.name.includes('Google UK English Male') ||
-          v.name.includes('Daniel') ||
-          v.name.includes('Alex') ||
-          v.name.includes('en-GB') ||
-          (v.lang.startsWith('en') && !v.name.includes('Google'))
-        )
-        if (preferred) u.voice = preferred
-
-        u.onend = () => {
-          isSpeaking.current = false
-          if (wantListen.current) {
-            // Wait a beat so microphone doesn't catch room echo
-            setTimeout(() => {
-              setStatus('listening')
-              startMic()
-            }, 600)
-          } else {
-            setStatus('idle')
-          }
-        }
-
-        u.onerror = () => {
-          isSpeaking.current = false
-          if (wantListen.current) {
-            setTimeout(() => { setStatus('listening'); startMic() }, 600)
-          } else {
-            setStatus('idle')
-          }
-        }
-
-        window.speechSynthesis.speak(u)
+  function speakAndResume(text: string, onDone?: () => void) {
+    if (mutedRef.current || !window.speechSynthesis) {
+      onDone?.()
+      if (voiceOnRef.current) {
+        setS('listening')
+        startListening()
       } else {
-        // Muted — go straight back to listening
-        setStatus(wantListen.current ? 'listening' : 'idle')
-        if (wantListen.current) startMic()
+        setS('idle')
       }
-    }, 800)
-  }, [muteReply, startMic])
-
-  // Check browser support
-  useEffect(() => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    setSupported(!!SR)
-  }, [])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      wantListen.current = false
-      isSpeaking.current = false
-      stopMic()
-      window.speechSynthesis?.cancel()
+      return
     }
-  }, [stopMic])
+
+    setS('speaking')
+    window.speechSynthesis.cancel()
+
+    const u = new SpeechSynthesisUtterance(text)
+    u.rate   = 1.05
+    u.pitch  = 1.0
+    u.volume = 1
+
+    // Pick best available voice
+    const voices = window.speechSynthesis.getVoices()
+    const preferred = voices.find(v =>
+      v.name.includes('Google UK English Male') ||
+      v.name.includes('Daniel') ||
+      v.name.includes('Alex') ||
+      v.name.includes('en-GB') ||
+      (v.lang.startsWith('en') && v.localService)
+    ) || voices.find(v => v.lang.startsWith('en'))
+    if (preferred) u.voice = preferred
+
+    const resume = () => {
+      onDone?.()
+      if (voiceOnRef.current) {
+        // Wait for echo to die before listening again
+        timerRef.current = setTimeout(() => {
+          setS('listening')
+          startListening()
+        }, 700)
+      } else {
+        setS('idle')
+      }
+    }
+
+    u.onend   = resume
+    u.onerror = resume
+
+    window.speechSynthesis.speak(u)
+  }
 
   function toggleVoice() {
     if (voiceOn) {
-      wantListen.current = false
-      isSpeaking.current = false
+      clearTimeout(timerRef.current)
+      killMic()
       window.speechSynthesis?.cancel()
-      stopMic()
+      voiceOnRef.current = false
       setVoiceOn(false)
-      setStatus('idle')
+      setS('idle')
     } else {
-      wantListen.current = true
+      voiceOnRef.current = true
       setVoiceOn(true)
-      setStatus('listening')
-      startMic()
+      startListening()
     }
   }
 
@@ -177,10 +238,11 @@ export default function AssistantPage() {
     const text = inputText.trim()
     if (!text) return
     setInputText('')
-    // Stop mic while processing typed input too
-    stopMic()
-    respond(text)
+    killMic()
+    processInput(text)
   }
+
+  const color = statusColors[status]
 
   return (
     <AppShell>
@@ -188,35 +250,32 @@ export default function AssistantPage() {
 
         {/* Background glow */}
         <div className="absolute inset-0 pointer-events-none transition-all duration-1000"
-          style={{ background: `radial-gradient(ellipse 60% 50% at 50% 40%, ${color}08 0%, transparent 70%)` }}
-        />
+          style={{ background: `radial-gradient(ellipse 60% 50% at 50% 40%, ${color}08 0%, transparent 70%)` }} />
 
-        {/* Top label */}
+        {/* Header */}
         <div className="relative z-10 text-center">
           <p className="text-orion-blue text-xs tracking-[0.3em] uppercase font-semibold">ORION AI</p>
           <p className="text-slate-500 text-xs mt-1">Personal AI Command Center</p>
         </div>
 
         {/* Orb */}
-        <div className="relative z-10 flex flex-col items-center gap-8 flex-1 justify-center">
+        <div className="relative z-10 flex flex-col items-center gap-6 flex-1 justify-center w-full">
           <div className="relative flex items-center justify-center" style={{ width: 220, height: 220 }}>
-            <div className="absolute inset-0 rounded-full border transition-all duration-700"
+            <div className="absolute inset-0 rounded-full border"
               style={{ borderColor: `${color}40`, animation: 'rotate-ring 8s linear infinite' }} />
-            <div className="absolute rounded-full border transition-all duration-700"
+            <div className="absolute rounded-full border"
               style={{ inset: 18, borderColor: `${color}30`, animation: 'rotate-ring 5s linear infinite reverse' }} />
-            <div className="absolute rounded-full border transition-all duration-700"
+            <div className="absolute rounded-full border"
               style={{ inset: 36, borderColor: `${color}50` }} />
-            <div className="absolute rounded-full transition-all duration-700 orb-pulse"
+            <div className="absolute rounded-full orb-pulse"
               style={{
                 inset: 50,
                 background: `radial-gradient(circle at 35% 35%, ${color}33, ${color}08, #050810)`,
                 boxShadow: `0 0 40px ${color}44, inset 0 0 20px ${color}22`,
                 border: `1px solid ${color}44`,
-              }}
-            />
-            <div className="absolute rounded-full transition-all duration-700"
-              style={{ width: 20, height: 20, background: color, boxShadow: `0 0 16px ${color}` }}
-            />
+              }} />
+            <div className="absolute rounded-full"
+              style={{ width: 20, height: 20, background: color, boxShadow: `0 0 16px ${color}` }} />
             {(status === 'listening' || status === 'speaking') && (
               <>
                 <div className="absolute rounded-full animate-ping opacity-20"
@@ -227,73 +286,79 @@ export default function AssistantPage() {
             )}
           </div>
 
-          {/* Status */}
-          <p className="text-sm font-semibold transition-all duration-500" style={{ color }}>
-            {statusLabels[status]}
-          </p>
+          <p className="text-sm font-semibold" style={{ color }}>{statusLabels[status]}</p>
 
-          {/* What user said */}
           {userSaid && (
-            <div className="text-center max-w-xs">
-              <p className="text-xs text-slate-500 mb-1">You said</p>
-              <p className="text-sm text-slate-300 italic">"{userSaid}"</p>
-            </div>
+            <p className="text-xs text-slate-400 italic text-center">You: "{userSaid}"</p>
           )}
 
-          {/* ORION reply bubble */}
-          <div className="glass rounded-2xl border p-5 max-w-sm w-full text-center transition-all duration-500"
+          {/* ORION reply */}
+          <div className="glass rounded-2xl border p-5 max-w-sm w-full text-center"
             style={{ borderColor: `${color}30` }}>
             <p className="text-xs mb-2 font-semibold uppercase tracking-widest" style={{ color }}>ORION</p>
             <p className="text-slate-200 text-sm leading-relaxed">{orionReply}</p>
           </div>
+
+          {/* Example commands hint */}
+          <div className="glass rounded-xl border border-slate-700/50 px-4 py-3 max-w-sm w-full">
+            <p className="text-xs text-slate-500 text-center mb-2">Try saying...</p>
+            <div className="flex flex-wrap gap-1 justify-center">
+              {['"Open WhatsApp"', '"Open YouTube"', '"How are you"', '"Motivate me"', '"Open training"'].map(e => (
+                <span key={e} className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Controls */}
-        <div className="relative z-10 w-full max-w-sm space-y-4">
-
+        <div className="relative z-10 w-full max-w-sm space-y-3">
           {/* Text input */}
           <div className="flex gap-2">
             <input
               value={inputText}
               onChange={e => setInputText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && sendText()}
-              placeholder="Type to ORION..."
-              className="flex-1 bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-orion-blue/50 transition-colors"
+              placeholder="Type a command or question..."
+              className="flex-1 bg-slate-800/80 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-orion-blue/50"
             />
             <button onClick={sendText} disabled={!inputText.trim()}
-              className="px-4 py-3 rounded-xl bg-orion-blue/20 border border-orion-blue/40 text-orion-blue text-sm font-medium hover:bg-orion-blue/30 transition-colors disabled:opacity-30">
+              className="px-4 py-3 rounded-xl bg-orion-blue/20 border border-orion-blue/40 text-orion-blue text-sm font-medium hover:bg-orion-blue/30 disabled:opacity-30 transition-colors">
               Send
             </button>
           </div>
 
-          {/* Voice + mute */}
+          {/* Mic + mute */}
           <div className="flex gap-3">
             {supported ? (
               <button onClick={toggleVoice}
-                className="flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl border-2 font-semibold transition-all"
+                className="flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl border-2 font-semibold transition-all active:scale-95"
                 style={{
                   borderColor: voiceOn ? color : '#334155',
                   background: voiceOn ? `${color}15` : 'transparent',
                   color: voiceOn ? color : '#64748b',
                 }}>
                 {voiceOn ? <Mic size={20} /> : <MicOff size={20} />}
-                {voiceOn ? (status === 'speaking' ? 'ORION Speaking...' : 'Listening') : 'Tap to Talk'}
+                {voiceOn
+                  ? status === 'speaking' ? 'ORION Speaking...'
+                  : status === 'processing' ? 'Processing...'
+                  : 'Listening — speak now'
+                  : 'Tap to Talk'}
               </button>
             ) : (
               <div className="flex-1 py-4 rounded-2xl border border-slate-700 text-slate-600 text-sm text-center">
                 Voice not supported on this browser
               </div>
             )}
-            <button onClick={() => setMuteReply(m => !m)}
-              className="p-4 rounded-2xl border border-slate-700 text-slate-500 hover:text-white hover:border-slate-500 transition-colors">
-              {muteReply ? <VolumeX size={20} /> : <Volume2 size={20} />}
+            <button onClick={() => setMuted(m => !m)}
+              className="p-4 rounded-2xl border border-slate-700 text-slate-500 hover:text-white transition-colors">
+              {muted ? <VolumeX size={20} /> : <Volume2 size={20} />}
             </button>
           </div>
 
-          {/* Prompt chips */}
+          {/* Quick chips */}
           <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-            {['How are you?', 'Motivate me', 'My progress', 'Training plan', "Tell me a joke"].map(p => (
-              <button key={p} onClick={() => respond(p)}
+            {['How are you?', 'Motivate me', 'Open WhatsApp', 'Open YouTube', 'Training plan'].map(p => (
+              <button key={p} onClick={() => processInput(p)}
                 className="flex-shrink-0 text-xs px-3 py-2 rounded-full bg-orion-blue/10 border border-orion-blue/20 text-orion-blue hover:bg-orion-blue/20 transition-colors">
                 {p}
               </button>
