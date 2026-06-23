@@ -79,10 +79,10 @@ export default function AssistantPage() {
   const [orionReply, setOrionReply] = useState('ORION is online. Tap the mic and talk to me.')
   const [inputText, setInputText]   = useState('')
   const [supported, setSupported]   = useState(false)
-  const [language, setLanguage]     = useState<'en' | 'ta'>('en')
+  const [langCode, setLangCode]     = useState('en-US')
 
   const router = useRouter()
-  const langRef = useRef<'en' | 'ta'>('en')
+  const langRef = useRef('en-US')
 
   // Single refs — no closures capturing stale state
   const recRef       = useRef<any>(null)
@@ -95,7 +95,7 @@ export default function AssistantPage() {
 
   useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
   useEffect(() => { mutedRef.current = muted }, [muted])
-  useEffect(() => { langRef.current = language }, [language])
+  useEffect(() => { langRef.current = langCode }, [langCode])
 
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -124,7 +124,7 @@ export default function AssistantPage() {
     const rec = new SR()
     rec.continuous     = false
     rec.interimResults = false
-    rec.lang           = langRef.current === 'ta' ? 'ta-IN' : 'en-US'
+    rec.lang           = langRef.current
     rec.maxAlternatives = 1
     recRef.current = rec
 
@@ -204,15 +204,9 @@ export default function AssistantPage() {
 
     // Pick best available voice
     const voices = window.speechSynthesis.getVoices()
-    const isTamil = langRef.current === 'ta'
-    const preferred = isTamil
-      ? voices.find(v => v.lang.startsWith('ta'))
-      : (voices.find(v =>
-          v.name.includes('Google UK English Male') ||
-          v.name.includes('Daniel') ||
-          v.name.includes('Alex') ||
-          (v.lang.startsWith('en') && v.localService)
-        ) || voices.find(v => v.lang.startsWith('en')))
+    const baseLang = langRef.current.split('-')[0]
+    const preferred = voices.find(v => v.lang.startsWith(baseLang)) ||
+      voices.find(v => v.lang.startsWith('en'))
     if (preferred) u.voice = preferred
 
     const resume = () => {
@@ -249,11 +243,9 @@ export default function AssistantPage() {
     }
   }
 
-  function toggleLanguage() {
-    const next = langRef.current === 'en' ? 'ta' : 'en'
-    langRef.current = next
-    setLanguage(next)
-    // Restart mic with new language if active
+  function changeLang(code: string) {
+    langRef.current = code
+    setLangCode(code)
     if (voiceOnRef.current && statusRef.current === 'listening') {
       killMic()
       setTimeout(() => startListening(), 200)
@@ -281,18 +273,32 @@ export default function AssistantPage() {
         {/* Header */}
         <div className="relative z-10 text-center flex flex-col items-center gap-2">
           <p className="text-orion-blue text-xs tracking-[0.3em] uppercase font-semibold">ORION AI</p>
-          <p className="text-slate-500 text-xs">Personal AI Command Center</p>
-          <button
-            onClick={toggleLanguage}
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold transition-all"
-            style={{
-              borderColor: language === 'ta' ? '#f97316' : '#00d4ff',
-              color: language === 'ta' ? '#f97316' : '#00d4ff',
-              background: language === 'ta' ? '#f9731615' : '#00d4ff15',
-            }}>
-            {language === 'ta' ? '🇮🇳 தமிழ்' : '🇬🇧 English'}
-            <span className="opacity-60 text-[10px]">tap to switch</span>
-          </button>
+          <p className="text-slate-500 text-xs">Speak any language — ORION understands all</p>
+          <select
+            value={langCode}
+            onChange={e => changeLang(e.target.value)}
+            className="text-xs px-3 py-1 rounded-full border border-orion-blue/40 bg-slate-900 text-orion-blue focus:outline-none cursor-pointer">
+            <option value="en-US">🇬🇧 English</option>
+            <option value="ta-IN">🇮🇳 Tamil / தமிழ்</option>
+            <option value="hi-IN">🇮🇳 Hindi / हिंदी</option>
+            <option value="ar-SA">🇸🇦 Arabic / عربي</option>
+            <option value="zh-CN">🇨🇳 Chinese / 中文</option>
+            <option value="fr-FR">🇫🇷 French / Français</option>
+            <option value="es-ES">🇪🇸 Spanish / Español</option>
+            <option value="de-DE">🇩🇪 German / Deutsch</option>
+            <option value="ja-JP">🇯🇵 Japanese / 日本語</option>
+            <option value="ko-KR">🇰🇷 Korean / 한국어</option>
+            <option value="pt-BR">🇧🇷 Portuguese</option>
+            <option value="ru-RU">🇷🇺 Russian / Русский</option>
+            <option value="ml-IN">🇮🇳 Malayalam / മലയാളം</option>
+            <option value="te-IN">🇮🇳 Telugu / తెలుగు</option>
+            <option value="kn-IN">🇮🇳 Kannada / ಕನ್ನಡ</option>
+            <option value="ur-PK">🇵🇰 Urdu / اردو</option>
+            <option value="it-IT">🇮🇹 Italian / Italiano</option>
+            <option value="tr-TR">🇹🇷 Turkish / Türkçe</option>
+            <option value="vi-VN">🇻🇳 Vietnamese</option>
+            <option value="th-TH">🇹🇭 Thai / ภาษาไทย</option>
+          </select>
         </div>
 
         {/* Orb */}
@@ -338,16 +344,11 @@ export default function AssistantPage() {
 
           {/* Example commands hint */}
           <div className="glass rounded-xl border border-slate-700/50 px-4 py-3 max-w-sm w-full">
-            <p className="text-xs text-slate-500 text-center mb-2">
-              {language === 'ta' ? 'இதை சொல்லி பாருங்கள்...' : 'Try saying...'}
-            </p>
+            <p className="text-xs text-slate-500 text-center mb-2">Try asking anything...</p>
             <div className="flex flex-wrap gap-1 justify-center">
-              {language === 'ta'
-                ? ['"வணக்கம் ஓரியன்"', '"என்னை ஊக்குவி"', '"வாட்ஸ்அப் திற"', '"பயிற்சி திட்டம்"']
-                    .map(e => <span key={e} className="text-xs text-orange-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>)
-                : ['"Open WhatsApp"', '"Open YouTube"', '"How are you"', '"Motivate me"', '"Open training"']
-                    .map(e => <span key={e} className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>)
-              }
+              {['"Diet plan for weight loss"', '"Silambam training tips"', '"Open WhatsApp"', '"Motivate me"', '"Workout for abs"'].map(e => (
+                <span key={e} className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>
+              ))}
             </div>
           </div>
         </div>
@@ -399,17 +400,9 @@ export default function AssistantPage() {
 
           {/* Quick chips */}
           <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-            {(language === 'ta'
-              ? ['வணக்கம்', 'என்னை ஊக்குவி', 'பயிற்சி திட்டம்', 'வாட்ஸ்அப் திற']
-              : ['How are you?', 'Motivate me', 'Open WhatsApp', 'Open YouTube', 'Training plan']
-            ).map(p => (
+            {['Motivate me', 'Diet plan', 'Silambam tips', 'Open YouTube', 'Workout plan', 'Mental focus'].map(p => (
               <button key={p} onClick={() => processInput(p)}
-                className="flex-shrink-0 text-xs px-3 py-2 rounded-full border transition-colors"
-                style={{
-                  background: language === 'ta' ? '#f9731610' : '#00d4ff10',
-                  borderColor: language === 'ta' ? '#f9731630' : '#00d4ff30',
-                  color: language === 'ta' ? '#f97316' : '#00d4ff',
-                }}>
+                className="flex-shrink-0 text-xs px-3 py-2 rounded-full bg-orion-blue/10 border border-orion-blue/20 text-orion-blue hover:bg-orion-blue/20 transition-colors">
                 {p}
               </button>
             ))}
