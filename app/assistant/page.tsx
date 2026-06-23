@@ -3,7 +3,6 @@ import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import AppShell from '@/components/layout/AppShell'
 import { Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
-import { getOrionReply } from '@/lib/mockData'
 
 type Status = 'idle' | 'listening' | 'processing' | 'speaking'
 
@@ -80,8 +79,10 @@ export default function AssistantPage() {
   const [orionReply, setOrionReply] = useState('ORION is online. Tap the mic and talk to me.')
   const [inputText, setInputText]   = useState('')
   const [supported, setSupported]   = useState(false)
+  const [language, setLanguage]     = useState<'en' | 'ta'>('en')
 
   const router = useRouter()
+  const langRef = useRef<'en' | 'ta'>('en')
 
   // Single refs — no closures capturing stale state
   const recRef       = useRef<any>(null)
@@ -94,6 +95,7 @@ export default function AssistantPage() {
 
   useEffect(() => { voiceOnRef.current = voiceOn }, [voiceOn])
   useEffect(() => { mutedRef.current = muted }, [muted])
+  useEffect(() => { langRef.current = language }, [language])
 
   useEffect(() => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
@@ -122,7 +124,7 @@ export default function AssistantPage() {
     const rec = new SR()
     rec.continuous     = false
     rec.interimResults = false
-    rec.lang           = 'en-US'
+    rec.lang           = langRef.current === 'ta' ? 'ta-IN' : 'en-US'
     rec.maxAlternatives = 1
     recRef.current = rec
 
@@ -161,12 +163,23 @@ export default function AssistantPage() {
       return
     }
 
-    // Normal conversation
-    setTimeout(() => {
-      const reply = getOrionReply(text)
-      setOrionReply(reply)
-      speakAndResume(reply)
-    }, 600)
+    // Real AI response
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, language: langRef.current }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        const reply = data.reply || 'Sorry, I could not understand that.'
+        setOrionReply(reply)
+        speakAndResume(reply)
+      })
+      .catch(() => {
+        const err = 'I had a connection issue. Please try again.'
+        setOrionReply(err)
+        speakAndResume(err)
+      })
   }
 
   function speakAndResume(text: string, onDone?: () => void) {
@@ -191,13 +204,15 @@ export default function AssistantPage() {
 
     // Pick best available voice
     const voices = window.speechSynthesis.getVoices()
-    const preferred = voices.find(v =>
-      v.name.includes('Google UK English Male') ||
-      v.name.includes('Daniel') ||
-      v.name.includes('Alex') ||
-      v.name.includes('en-GB') ||
-      (v.lang.startsWith('en') && v.localService)
-    ) || voices.find(v => v.lang.startsWith('en'))
+    const isTamil = langRef.current === 'ta'
+    const preferred = isTamil
+      ? voices.find(v => v.lang.startsWith('ta'))
+      : (voices.find(v =>
+          v.name.includes('Google UK English Male') ||
+          v.name.includes('Daniel') ||
+          v.name.includes('Alex') ||
+          (v.lang.startsWith('en') && v.localService)
+        ) || voices.find(v => v.lang.startsWith('en')))
     if (preferred) u.voice = preferred
 
     const resume = () => {
@@ -234,6 +249,17 @@ export default function AssistantPage() {
     }
   }
 
+  function toggleLanguage() {
+    const next = langRef.current === 'en' ? 'ta' : 'en'
+    langRef.current = next
+    setLanguage(next)
+    // Restart mic with new language if active
+    if (voiceOnRef.current && statusRef.current === 'listening') {
+      killMic()
+      setTimeout(() => startListening(), 200)
+    }
+  }
+
   function sendText() {
     const text = inputText.trim()
     if (!text) return
@@ -253,9 +279,20 @@ export default function AssistantPage() {
           style={{ background: `radial-gradient(ellipse 60% 50% at 50% 40%, ${color}08 0%, transparent 70%)` }} />
 
         {/* Header */}
-        <div className="relative z-10 text-center">
+        <div className="relative z-10 text-center flex flex-col items-center gap-2">
           <p className="text-orion-blue text-xs tracking-[0.3em] uppercase font-semibold">ORION AI</p>
-          <p className="text-slate-500 text-xs mt-1">Personal AI Command Center</p>
+          <p className="text-slate-500 text-xs">Personal AI Command Center</p>
+          <button
+            onClick={toggleLanguage}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-semibold transition-all"
+            style={{
+              borderColor: language === 'ta' ? '#f97316' : '#00d4ff',
+              color: language === 'ta' ? '#f97316' : '#00d4ff',
+              background: language === 'ta' ? '#f9731615' : '#00d4ff15',
+            }}>
+            {language === 'ta' ? '🇮🇳 தமிழ்' : '🇬🇧 English'}
+            <span className="opacity-60 text-[10px]">tap to switch</span>
+          </button>
         </div>
 
         {/* Orb */}
@@ -301,11 +338,16 @@ export default function AssistantPage() {
 
           {/* Example commands hint */}
           <div className="glass rounded-xl border border-slate-700/50 px-4 py-3 max-w-sm w-full">
-            <p className="text-xs text-slate-500 text-center mb-2">Try saying...</p>
+            <p className="text-xs text-slate-500 text-center mb-2">
+              {language === 'ta' ? 'இதை சொல்லி பாருங்கள்...' : 'Try saying...'}
+            </p>
             <div className="flex flex-wrap gap-1 justify-center">
-              {['"Open WhatsApp"', '"Open YouTube"', '"How are you"', '"Motivate me"', '"Open training"'].map(e => (
-                <span key={e} className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>
-              ))}
+              {language === 'ta'
+                ? ['"வணக்கம் ஓரியன்"', '"என்னை ஊக்குவி"', '"வாட்ஸ்அப் திற"', '"பயிற்சி திட்டம்"']
+                    .map(e => <span key={e} className="text-xs text-orange-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>)
+                : ['"Open WhatsApp"', '"Open YouTube"', '"How are you"', '"Motivate me"', '"Open training"']
+                    .map(e => <span key={e} className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded-lg">{e}</span>)
+              }
             </div>
           </div>
         </div>
@@ -357,9 +399,17 @@ export default function AssistantPage() {
 
           {/* Quick chips */}
           <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-            {['How are you?', 'Motivate me', 'Open WhatsApp', 'Open YouTube', 'Training plan'].map(p => (
+            {(language === 'ta'
+              ? ['வணக்கம்', 'என்னை ஊக்குவி', 'பயிற்சி திட்டம்', 'வாட்ஸ்அப் திற']
+              : ['How are you?', 'Motivate me', 'Open WhatsApp', 'Open YouTube', 'Training plan']
+            ).map(p => (
               <button key={p} onClick={() => processInput(p)}
-                className="flex-shrink-0 text-xs px-3 py-2 rounded-full bg-orion-blue/10 border border-orion-blue/20 text-orion-blue hover:bg-orion-blue/20 transition-colors">
+                className="flex-shrink-0 text-xs px-3 py-2 rounded-full border transition-colors"
+                style={{
+                  background: language === 'ta' ? '#f9731610' : '#00d4ff10',
+                  borderColor: language === 'ta' ? '#f9731630' : '#00d4ff30',
+                  color: language === 'ta' ? '#f97316' : '#00d4ff',
+                }}>
                 {p}
               </button>
             ))}
