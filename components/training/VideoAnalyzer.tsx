@@ -59,6 +59,8 @@ export default function VideoAnalyzer() {
   const [fullAnalysing, setFullAnalysing] = useState(false)
   const [fullProgress, setFullProgress] = useState(0)
   const [autoAnalyse, setAutoAnalyse] = useState(false)
+  const [combatAdvice, setCombatAdvice] = useState<string | null>(null)
+  const [loadingAdvice, setLoadingAdvice] = useState(false)
   const [cameraOn, setCameraOn]       = useState(false)
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null)
   const [selectedSkill, setSelectedSkill] = useState<SilambamTechnique>(SILAMBAM_TECHNIQUES[0])
@@ -161,7 +163,32 @@ export default function VideoAnalyzer() {
     }
   }, [])
 
-  const analyseFrame = useCallback(async () => {
+  const getCombatAdvice = useCallback(async (rec: AnalysisRecord) => {
+    setLoadingAdvice(true)
+    setCombatAdvice(null)
+    try {
+      const res = await fetch('/api/combat-advice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          technique: rec.technique,
+          overallScore: rec.metrics.overallScore,
+          balance: rec.metrics.balance,
+          kneeBend: rec.metrics.kneeBend,
+          shoulderTilt: rec.metrics.shoulderTilt,
+          stanceWidth: rec.metrics.stanceWidth,
+          handHeight: rec.metrics.handHeight,
+          attackSpeed: rec.attackSpeed,
+          power: rec.power,
+        }),
+      })
+      const data = await res.json()
+      setCombatAdvice(data.advice)
+    } catch { setCombatAdvice('Could not get advice.') }
+    setLoadingAdvice(false)
+  }, [])
+
+  const analyseFrame = useCallback(async (withAdvice = true) => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return
@@ -176,10 +203,11 @@ export default function VideoAnalyzer() {
         const rec = buildRecord(lm, formatTime(video.currentTime))
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
+        if (withAdvice) getCombatAdvice(rec)
       }
     } catch (err) { console.error(err) }
     setIsAnalysing(false); setLoadingModel(false)
-  }, [drawSkeleton, buildRecord])
+  }, [drawSkeleton, buildRecord, getCombatAdvice])
 
   const analyseFullVideo = useCallback(async () => {
     const video = videoRef.current
@@ -213,10 +241,23 @@ export default function VideoAnalyzer() {
     setFullProgress(100); setFullAnalysing(false)
   }, [drawSkeleton, buildRecord])
 
+  // Auto-analyse when video is paused by user
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !videoSrc) return
+    const onPause = () => {
+      if (video.currentTime > 0 && video.currentTime < video.duration) {
+        analyseFrame(true)
+      }
+    }
+    video.addEventListener('pause', onPause)
+    return () => video.removeEventListener('pause', onPause)
+  }, [videoSrc, analyseFrame])
+
   // Auto analyse on video play
   useEffect(() => {
     if (autoAnalyse && isPlaying) {
-      autoIntervalRef.current = setInterval(() => analyseFrame(), 800)
+      autoIntervalRef.current = setInterval(() => analyseFrame(false), 800)
     } else {
       if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null }
     }
@@ -390,11 +431,30 @@ export default function VideoAnalyzer() {
                         {autoAnalyse ? 'Auto ON' : 'Auto OFF'}
                       </button>
                     </div>
-                    <button onClick={() => { setVideoSrc(null); setRecords([]) }}
+                    <button onClick={() => { setVideoSrc(null); setRecords([]); setCombatAdvice(null) }}
                       className="w-full py-2 rounded-xl border border-red-400/20 text-red-400/60 text-xs hover:text-red-400 transition-all">
                       Remove Video
                     </button>
                   </div>
+
+                  {/* ORION Combat Advice Panel — appears on pause */}
+                  {(loadingAdvice || combatAdvice) && (
+                    <div className="rounded-2xl border p-4 space-y-2" style={{ background: '#a855f708', borderColor: '#a855f730' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse bg-purple-400" />
+                        <p className="text-xs font-bold uppercase tracking-widest text-purple-400">ORION Combat Analysis</p>
+                      </div>
+                      {loadingAdvice ? (
+                        <div className="flex items-center gap-2 text-slate-400 text-sm">
+                          <span className="animate-spin text-purple-400">⚙</span> Analysing position...
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-200 whitespace-pre-line leading-relaxed">
+                          {combatAdvice}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </>
@@ -581,10 +641,16 @@ export default function VideoAnalyzer() {
                         </div>
                       </div>
 
-                      <button onClick={() => setRecords(prev => prev.filter(r => r.id !== rec.id))}
-                        className="w-full py-2 rounded-xl border border-red-400/20 text-red-400/50 text-xs hover:text-red-400 transition-all flex items-center justify-center gap-1">
-                        <Trash2 size={11} /> Delete record
-                      </button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => { getCombatAdvice(rec); setTab('analyze') }}
+                          className="py-2 rounded-xl border border-purple-400/30 text-purple-400 text-xs font-semibold hover:bg-purple-400/10 transition-all">
+                          ⚔️ Get Counter Moves
+                        </button>
+                        <button onClick={() => setRecords(prev => prev.filter(r => r.id !== rec.id))}
+                          className="py-2 rounded-xl border border-red-400/20 text-red-400/50 text-xs hover:text-red-400 transition-all flex items-center justify-center gap-1">
+                          <Trash2 size={11} /> Delete
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
