@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     }
 
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: message }],
@@ -72,12 +72,7 @@ export async function POST(req: NextRequest) {
     const reply = (response.content[0] as any).text || 'Sorry, I could not process that.'
     return NextResponse.json({ reply })
   } catch (err: any) {
-    console.error('ORION API error:', err?.message || err)
-    const msg = err?.message?.includes('API key')
-      ? 'API key not configured. Please add ANTHROPIC_API_KEY in Vercel settings.'
-      : err?.message?.includes('model')
-      ? 'Model error: ' + err.message
-      : 'I had a technical issue. Please try again.'
-    return NextResponse.json({ reply: msg }, { status: 500 })
+    console.error('ORION API error:', err?.status, err?.message || err)
+    return NextResponse.json({ reply: `Error: ${err?.message || 'Unknown error'}` }, { status: 500 })
   }
 }
