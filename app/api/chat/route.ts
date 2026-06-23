@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (cache.size > 500) {
       // Clear oldest entries when cache gets large
       const oldest = [...cache.entries()].sort((a, b) => a[1].time - b[1].time).slice(0, 100)
-      oldest.forEach(([k]: [string, unknown]) => cache.delete(k))
+      oldest.forEach((entry) => cache.delete(entry[0]))
     }
 
     return NextResponse.json({ reply })
