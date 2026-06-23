@@ -2,8 +2,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import AppShell from '@/components/layout/AppShell'
 import { Mic, MicOff, Volume2, VolumeX } from 'lucide-react'
-import { orionResponses } from '@/lib/mockData'
-import { getRandomResponse } from '@/lib/utils'
+import { getOrionReply } from '@/lib/mockData'
 
 type Status = 'idle' | 'listening' | 'processing' | 'speaking'
 
@@ -56,7 +55,7 @@ export default function AssistantPage() {
     setStatus('processing')
     setUserSaid(question)
     setTimeout(() => {
-      const reply = getRandomResponse(orionResponses)
+      const reply = getOrionReply(question)
       setOrionReply(reply)
       if (!muteReply) {
         speak(reply)
