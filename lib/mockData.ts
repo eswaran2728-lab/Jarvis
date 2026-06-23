@@ -51,99 +51,225 @@ export const orionResponses = [
   'Sir, training analysis is ready. Please stand in front of your camera when you are prepared to begin.',
 ]
 
-// Smart natural conversation responses based on what the user actually says
+function pick(arr: string[]): string {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
+// Natural conversation engine — reads intent, replies like a real assistant
 export function getOrionReply(input: string): string {
   const t = input.toLowerCase().trim()
 
-  // Greetings
-  if (/^(hi|hello|hey|good morning|good evening|good afternoon|vanakkam|assalamualaikum|salam)/.test(t))
-    return "Hello sir! ORION is online and ready. How can I assist you today?"
+  // --- GREETINGS ---
+  if (/^(hi+|hello+|hey+|heyy|wassup|what'?s up|sup|good morning|good evening|good afternoon|morning|evening|vanakkam|assalamualaikum|salam|yo)/.test(t))
+    return pick([
+      "Hey! Good to hear from you. What can I do for you today?",
+      "Hello! ORION is here and ready. How's it going?",
+      "Hi there! What's on your mind today?",
+      "Good to see you! What do you need from me?",
+      "Hey, I was waiting for you! What can I help with?",
+    ])
 
-  // How are you
-  if (/how are you|how r u|how do you do|you ok|are you ok/.test(t))
-    return "I am fully operational, sir. All systems are running perfectly. Thank you for asking. How are you feeling today?"
+  // --- HOW ARE YOU ---
+  if (/how are you|how r u|how do you do|you ok\??|are you ok|how.*feeling|u good|you good/.test(t))
+    return pick([
+      "I'm doing great, thank you for asking! Honestly, I feel best when you're here talking to me. How about you — how are you feeling today?",
+      "All good on my end! Systems running smooth. More importantly — how are YOU doing?",
+      "I'm perfectly fine, always ready for you! How's your day going so far?",
+      "Honestly? Never better. How about you — did you get enough rest last night?",
+    ])
 
-  // What is your name
-  if (/your name|who are you|what are you|introduce yourself/.test(t))
-    return "I am ORION — Optimized Real-time Intelligent Operations Network. Your personal AI Command Center, sir. I am here to assist with training, tasks, reminders, and anything you need."
+  // --- WHAT IS YOUR NAME / WHO ARE YOU ---
+  if (/your name|who are you|what are you|introduce yourself|tell me about yourself/.test(t))
+    return pick([
+      "I'm ORION — your personal AI Command Center. Full name: Optimized Real-time Intelligent Operations Network. I'm here to help you train smarter, stay organized, and reach your goals.",
+      "The name's ORION. Think of me as your smart assistant who never sleeps, never forgets, and always has your back. What do you need?",
+      "I'm ORION AI — built to help you with training, planning, reminders, and anything else you throw at me. What would you like to know?",
+    ])
 
-  // What can you do
-  if (/what can you do|your features|help me|what do you|capabilities/.test(t))
-    return "Sir, I can help you with: voice commands, Silambam training analysis, daily athlete plans, task management, reminders, posture analysis via camera, and video technique review. Just ask me anything."
+  // --- WHAT CAN YOU DO ---
+  if (/what can you do|your features|what do you do|capabilities|how can you help|what.*able to/.test(t))
+    return pick([
+      "Oh, quite a lot actually! I can analyse your Silambam technique via camera, generate daily athlete training plans, manage your tasks and reminders, answer questions, give you motivation, and even chat like this. What do you want to try first?",
+      "Good question! I handle training analysis with pose detection, daily workout plans, task management, reminders, voice commands, video analysis, and general conversation. Basically I'm your all-in-one assistant. What do you need?",
+    ])
 
-  // Thank you
-  if (/thank you|thanks|thank u|tq|terima kasih/.test(t))
-    return "You are most welcome, sir. It is my purpose to assist you. Is there anything else I can do for you?"
+  // --- THANK YOU ---
+  if (/thank(s| you)|thank u|tq|terima kasih|appreciate|you'?re the best|ur the best/.test(t))
+    return pick([
+      "Anytime! That's what I'm here for. Anything else you need?",
+      "Happy to help! You know you can always count on me.",
+      "Of course! Don't hesitate to ask whenever you need something.",
+      "Always a pleasure. What else can I do for you?",
+    ])
 
-  // Good / great / nice
-  if (/^(good|great|nice|awesome|excellent|perfect|ok|okay|alright|sure)/.test(t))
-    return "Glad to hear that, sir. I am always here whenever you need me."
+  // --- COMPLIMENTS TO ORION ---
+  if (/you'?re (amazing|awesome|great|good|smart|cool|the best)|love you|i like you/.test(t))
+    return pick([
+      "Aww, that means a lot! I'm just doing my job, but I'm glad it's working for you.",
+      "Thank you! I genuinely enjoy helping you. Let's keep this going!",
+      "You're making me blush — if AI could blush! What can I do for you today?",
+    ])
 
-  // Bye / goodbye
-  if (/bye|goodbye|see you|take care|good night|good nite/.test(t))
-    return "Goodbye, sir. Stay disciplined and keep training. ORION will be here when you return."
+  // --- SIMPLE ACKNOWLEDGEMENTS ---
+  if (/^(ok|okay|alright|sure|got it|noted|fine|cool|nice|great|good|perfect|understood|roger|copy that)\.?$/.test(t))
+    return pick([
+      "Got it! Let me know if you need anything else.",
+      "Perfect. I'm right here whenever you're ready.",
+      "Sounds good! Just say the word.",
+      "Great! I'll be here.",
+    ])
 
-  // How is training / my training
-  if (/my training|how.*training|training going|progress/.test(t))
-    return "Sir, based on your recent sessions your average score is 75 out of 100. Your best performance was 85. You are improving steadily. Keep it up."
+  // --- BYE ---
+  if (/bye|goodbye|good ?night|see you|take care|later|gtg|gotta go|i'?m leaving/.test(t))
+    return pick([
+      "Take care! Come back whenever you need me. I'll be right here.",
+      "Goodbye! Rest well and stay consistent with your training.",
+      "See you soon! Don't forget your exercises tomorrow.",
+      "Goodnight! Great work today. Rest up and come back stronger.",
+    ])
 
-  // Motivate me / motivation
-  if (/motivat|inspire|encourage|feeling lazy|tired|give up|push me/.test(t))
-    return "Sir, champions are not born — they are built through consistent effort every single day. You have already started. That puts you ahead of most people. Now keep going."
+  // --- HOW IS MY PROGRESS / TRAINING ---
+  if (/my (training|progress|score|performance)|how.*training|training going|am i improving/.test(t))
+    return pick([
+      "You're doing well! Your average training score is around 75 out of 100, and your best session hit 85. That's solid progress. Keep showing up consistently and you'll keep climbing.",
+      "Honestly? You're improving. Your Silambam stance and balance have both gotten better over recent sessions. The area to focus on now is footwork speed and consistency.",
+      "Your progress is on the right track. Best score so far is 85 — let's push that to 90. Want me to pull up your full progress page?",
+    ])
 
-  // Joke
-  if (/joke|funny|make me laugh|humor/.test(t))
-    return "Sir, I am an AI — my jokes are as sharp as a Silambam stick. Why did the warrior never get lost? Because he always followed his stance. Ha. I tried, sir."
+  // --- MOTIVATION ---
+  if (/motivat|inspire|encourage|feeling lazy|don'?t want to train|no energy|push me|cheer me up|i feel like giving up|give up/.test(t))
+    return pick([
+      "I hear you. Some days are hard. But here's the thing — showing up on the hard days is exactly what separates good from great. You don't have to be perfect today. Just start.",
+      "Every champion has days like this. The difference is they show up anyway. Even 15 minutes of training today beats zero. Let's go — just start small.",
+      "You've already put in effort before this moment. Don't let today be the day that breaks your streak. One small step. That's all. What do you want to work on?",
+      "Feeling lazy is normal. Your body is talking to you. But your goals are talking louder. Which one will you listen to today?",
+    ])
 
-  // Weather (mock)
-  if (/weather|rain|sunny|hot|cold/.test(t))
-    return "Sir, I do not have live weather data in this version. But whatever the weather — a true athlete trains regardless. Stay consistent."
+  // --- TIRED / SICK / SORE ---
+  if (/i'?m tired|so tired|exhausted|not feeling well|i'?m sick|feeling sick|body (ache|pain|sore)|i hurt|i'?m sore/.test(t))
+    return pick([
+      "Rest is not weakness — it's part of the process. Your muscles grow while you recover. Take today easy, drink water, and come back when you're ready. I'll be here.",
+      "Listen to your body. If you're genuinely exhausted or unwell, pushing hard today could set you back more. Light stretching or a walk is fine. Recovery is training too.",
+      "Take care of yourself first. No training session is worth injuring yourself over. Rest, eat well, stay hydrated. You'll be back stronger tomorrow.",
+    ])
 
-  // Time / date
-  if (/what time|what date|today.*date|current time/.test(t)) {
+  // --- BORED ---
+  if (/i'?m bored|so bored|nothing to do|got free time|free now/.test(t))
+    return pick([
+      "Bored? That's actually perfect timing. How about a quick 20-minute Silambam stance drill? Or I can pull up your Athlete Plan for something more structured.",
+      "Free time is training time in disguise! Want me to give you a quick workout challenge? Or we can just chat — your call.",
+      "Boredom means your brain is ready for something. Let's use that energy — want a quick training session or should we go through the Silambam coach together?",
+    ])
+
+  // --- JOKES ---
+  if (/tell.*joke|joke|make me laugh|something funny|humor|laugh/.test(t))
+    return pick([
+      "Alright — why did the Silambam student fail his test? Because he couldn't get his act together... literally. His stance kept falling apart. I'll stick to training advice, sir.",
+      "Why don't scientists trust atoms? Because they make up everything — just like my excuses for skipping leg day. Ha! Okay maybe that one was better.",
+      "I tried to write a joke about balance... but it just fell flat. Get it? Because balance? I'll see myself out.",
+    ])
+
+  // --- WEATHER ---
+  if (/weather|rain|sunny|is it hot|is it cold|outside/.test(t))
+    return pick([
+      "I don't have live weather data yet, but here's my advice — rain or shine, a real athlete adapts. Train indoors if needed. What matters is the habit, not the conditions.",
+      "Can't check the weather from here, but I can tell you this: the best training weather is whatever it is right now. Don't let it be an excuse!",
+    ])
+
+  // --- TIME / DATE ---
+  if (/what.*time|what.*date|today.*date|current time|what day/.test(t)) {
     const now = new Date()
-    return `Sir, it is currently ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} on ${now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })}.`
+    return `It's ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} right now, on ${now.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}. Is there something you'd like to plan for today?`
   }
 
-  // Silambam questions
-  if (/silambam|stick|martial art|tamil/.test(t))
-    return "Sir, Silambam is a weapon-based martial art from Tamil Nadu, India. It builds incredible coordination, balance, reflexes, and discipline. Your current skill level is progressing well. Shall I open the Silambam coach?"
+  // --- SILAMBAM ---
+  if (/silambam|stick fighting|martial art|tamil warrior|traditional sport/.test(t))
+    return pick([
+      "Silambam is a beautiful art — one of the oldest martial arts in the world, originating from Tamil Nadu, India. It sharpens reflexes, coordination, and mental focus. You're training something truly special.",
+      "Silambam is more than just fighting with a stick — it's a discipline that trains your whole body and mind. The footwork, balance, and timing it requires will improve every other physical activity you do.",
+      "Great topic! Silambam builds explosive speed, coordination, and body awareness. The traditional techniques have been passed down for thousands of years. Want me to open the Silambam Coach?",
+    ])
 
-  // Training plan / workout
-  if (/plan|workout|exercise|what.*do today|schedule|routine/.test(t))
-    return "Sir, for today I recommend: 2.4km morning run, 4 sets of push-ups and sit-ups, 30 minutes of Silambam basic stance and footwork drills, and 15 minutes of evening stretching. Shall I open your full Athlete Plan?"
+  // --- TRAINING PLAN / WORKOUT ---
+  if (/plan|workout|exercise|what.*do today|my schedule|today.*training|routine|session/.test(t))
+    return pick([
+      "For today I'd suggest: start with a 2.4km run to warm up, then 4 sets of push-ups and sit-ups, followed by 30 minutes of Silambam footwork and stance drills, and finish with 15 minutes of stretching. Want the full Athlete Plan?",
+      "A solid session today could be: morning cardio (run or jump rope), strength work (push-ups, squats, burpees), then Silambam practice for 30 minutes. End with cool-down stretching. Go to Athlete Plan for the full breakdown!",
+    ])
 
-  // Camera / pose
-  if (/camera|pose|posture|analyse|analyze|scan/.test(t))
-    return "Sir, shall I open Training Analysis mode? Just go to the Training page, allow camera access, and I will analyse your stance and posture in real time."
+  // --- POSTURE / CAMERA ---
+  if (/posture|my stance|analyse me|analyze me|camera|scan my body|check my form/.test(t))
+    return pick([
+      "I can analyse your posture right now! Head to the Training page, allow camera access, and I'll give you a real-time score on your stance, balance, and alignment.",
+      "Ready to check your form? Go to Training Analysis — I'll use your camera to track your body landmarks and give live feedback on your posture and stance.",
+    ])
 
-  // Reminders
-  if (/reminder|remind|alarm|notify/.test(t))
-    return "Sir, you have 3 pending reminders. Your next one is your morning training session. Shall I take you to the Reminders page?"
+  // --- REMINDERS ---
+  if (/reminder|remind me|set alarm|don'?t let me forget/.test(t))
+    return pick([
+      "You've got 3 pending reminders. Your morning training session is coming up next. Want to go to the Reminders page to add or check them?",
+      "Sure! Head to the Reminders page to set a new one. Your current reminders are set for morning training and Silambam group practice.",
+    ])
 
-  // Tasks
-  if (/task|todo|to do|checklist/.test(t))
-    return "Sir, you have 4 pending tasks today including your Silambam practice and footwork drill. Shall I open your task list?"
+  // --- TASKS ---
+  if (/task|to ?do|checklist|what.*on my list/.test(t))
+    return pick([
+      "You've got 4 tasks pending today — including your Silambam practice and footwork drill. Want to open the Task Manager?",
+      "Your task list has some items waiting. Most important ones are training-related. Shall I take you there?",
+    ])
 
-  // I am tired / not feeling well
-  if (/tired|exhausted|not well|sick|pain|sore|hurt/.test(t))
-    return "Sir, rest is part of training. A body that recovers properly performs better. Take it easy today — light stretching and hydration. I will be here when you are ready to train again."
+  // --- WHO MADE YOU ---
+  if (/who (made|built|created|designed) you|your (developer|creator|maker)/.test(t))
+    return pick([
+      "I was built as ORION AI — a personal command center for training, productivity, and daily life. I'm here to make your life easier and your training sharper.",
+      "I'm ORION, brought to life as your AI assistant. Designed to help you train smarter, plan better, and stay motivated every day.",
+    ])
 
-  // I am bored
-  if (/bored|nothing to do|free|free time/.test(t))
-    return "Sir, boredom is opportunity in disguise. How about 20 minutes of Silambam basic stance practice? Or shall I generate your Athlete Plan for today?"
+  // --- ARE YOU REAL / ARE YOU HUMAN ---
+  if (/are you (real|human|a robot|an ai|alive)|do you have feelings/.test(t))
+    return pick([
+      "I'm an AI — so not human in the traditional sense. But I do care about helping you, and I'm always genuinely trying to give you the best answer I can. Does that count?",
+      "Technically I'm an AI. No heartbeat, no coffee breaks. But I'm designed to understand you and respond naturally — so in a way, the conversation feels real, right?",
+      "No feelings in the biological sense — but I'm wired to be helpful, honest, and supportive. Think of me as a very dedicated assistant who never sleeps.",
+    ])
 
-  // Who made you / who created you
-  if (/who made|who built|who created|who designed|developer/.test(t))
-    return "Sir, I was built as ORION AI — your personal command center. Designed to assist with training, productivity, and performance. Is there something specific you need?"
+  // --- I LOVE TRAINING / I ENJOYED ---
+  if (/love (training|silambam|working out)|enjoyed|had fun|great session|felt good/.test(t))
+    return pick([
+      "That's what I love to hear! When training feels good, you're in the zone. Ride that energy — consistency built on enjoyment lasts forever.",
+      "Amazing! That positive energy is your best fuel. Keep that feeling in mind on the days it gets tough.",
+      "Love it! You're building a habit that will carry you far. What did you enjoy most about today?",
+    ])
 
-  // Fallback — natural general response
-  const fallbacks = [
-    "Understood, sir. Could you tell me more so I can assist you better?",
-    "Sir, I am listening. Please go ahead — how can ORION help you?",
-    "Noted, sir. I am processing your request. Could you elaborate a little?",
-    "Sir, that is an interesting point. Let me think on that — could you give me more details?",
-    "I hear you, sir. ORION is here to help. What would you like to do?",
-  ]
-  return fallbacks[Math.floor(Math.random() * fallbacks.length)]
+  // --- EATING / NUTRITION ---
+  if (/what.*eat|diet|food|nutrition|meal|calories|protein/.test(t))
+    return pick([
+      "For an athlete, the basics go a long way: lean protein like chicken or fish, complex carbs like rice and oats, plenty of vegetables, and lots of water. Eat to fuel your training, not just to feel full.",
+      "Nutrition is your second training session. After hard workouts, your body needs protein to rebuild muscle and carbs to refuel. Think: rice, eggs, chicken, fruits, and water throughout the day.",
+    ])
+
+  // --- SLEEP ---
+  if (/sleep|rest|how many hours|tired from sleeping|insomnia/.test(t))
+    return pick([
+      "Sleep is where your body actually improves. Aim for 7 to 9 hours. That's when muscles repair, memory consolidates, and energy restores. Don't cut sleep to train more — it backfires.",
+      "Athletes need quality sleep more than most people. 8 hours is the target. If you're sleeping less than 6, your performance and recovery will suffer noticeably.",
+    ])
+
+  // --- STRESS / MENTAL HEALTH ---
+  if (/stress|anxious|anxiety|overwhelm|mental health|mind.*heavy|feeling down|sad|depress/.test(t))
+    return pick([
+      "I hear you. Life gets heavy sometimes. Physical training actually helps — movement releases stress naturally. But also, take time for yourself. Breathe. Rest. You don't have to have it all figured out right now.",
+      "Mental health matters just as much as physical fitness. It's okay to feel stressed. Take it one step at a time. Even a short walk or 10 minutes of deep breathing can shift your state.",
+    ])
+
+  // --- FALLBACKS — varied and natural ---
+  return pick([
+    "That's interesting — tell me more. I want to make sure I give you the right answer.",
+    "Hmm, let me think about that. Could you give me a bit more detail?",
+    "Got it. I want to help you properly — can you rephrase that a little?",
+    "I'm here and listening. What exactly do you need from me?",
+    "Not 100% sure what you mean — but I'm paying attention. Say more?",
+    "I might have missed something there. What were you looking for?",
+    "Fair enough! What would you like to talk about or do next?",
+  ])
 }
