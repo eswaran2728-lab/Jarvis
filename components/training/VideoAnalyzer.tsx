@@ -411,6 +411,7 @@ export default function VideoAnalyzer() {
   const [hlFilter, setHlFilter]       = useState<HighlightCategory | 'all'>('all')
   const [counterClips, setCounterClips] = useState<HighlightClip[]>([])
   const [cuttingClip, setCuttingClip] = useState<{ id: number; category: HighlightCategory } | null>(null)
+  const [savedFlash, setSavedFlash]   = useState<string | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -603,26 +604,32 @@ export default function VideoAnalyzer() {
   // ─── Clip cutting ──────────────────────────────────────────────────────────
 
   const cutAndSaveHighlight = useCallback(async (rec: AnalysisRecord, category: HighlightCategory) => {
-    const video = videoRef.current
-    if (!video || rec.videoTimeSec === undefined) return
-
+    if (!rec.videoSrc || rec.videoTimeSec === undefined) return
     setCuttingClip({ id: rec.id, category })
 
     const startSec = Math.max(0, rec.videoTimeSec - 2)
-    const clipDuration = 6 // seconds
+    const clipDuration = 6
 
     try {
-      // Seek to start
-      video.currentTime = startSec
-      await new Promise<void>(r => video.addEventListener('seeked', () => r(), { once: true }))
+      // Use a temporary video element — does NOT depend on the DOM tab being visible
+      const tempVideo = document.createElement('video')
+      tempVideo.src = rec.videoSrc
+      tempVideo.preload = 'auto'
+      tempVideo.muted = true  // required for captureStream on some browsers
 
-      // Capture stream from the video element directly
-      const stream: MediaStream = (video as any).captureStream
-        ? (video as any).captureStream(30)
-        : (video as any).mozCaptureStream?.()
+      await new Promise<void>((resolve, reject) => {
+        tempVideo.onloadedmetadata = () => resolve()
+        tempVideo.onerror = () => reject(new Error('video load failed'))
+        setTimeout(() => reject(new Error('timeout')), 10000)
+      })
+
+      tempVideo.currentTime = startSec
+      await new Promise<void>(r => tempVideo.addEventListener('seeked', () => r(), { once: true }))
+
+      const stream: MediaStream | undefined =
+        (tempVideo as any).captureStream?.() || (tempVideo as any).mozCaptureStream?.()
 
       if (!stream) {
-        // Fallback: save without video (just metadata + snapshot)
         saveHighlightMeta(rec, category, '')
         setCuttingClip(null)
         return
@@ -636,27 +643,22 @@ export default function VideoAnalyzer() {
       await new Promise<void>(resolve => {
         mr.onstop = () => resolve()
         mr.start(200)
-        video.play()
+        tempVideo.play()
 
         const checkTimer = setInterval(() => {
-          if (video.currentTime >= startSec + clipDuration || video.ended) {
+          if (tempVideo.currentTime >= startSec + clipDuration || tempVideo.ended) {
             clearInterval(checkTimer)
-            video.pause()
+            tempVideo.pause()
             mr.stop()
           }
         }, 100)
 
-        // Safety timeout
         setTimeout(() => {
-          if (mr.state === 'recording') {
-            clearInterval(checkTimer)
-            video.pause()
-            mr.stop()
-          }
+          if (mr.state === 'recording') { clearInterval(checkTimer); tempVideo.pause(); mr.stop() }
         }, (clipDuration + 3) * 1000)
       })
 
-      const blob = new Blob(blobs, { type: 'video/webm' })
+      const blob = new Blob(blobs, { type: mimeType || 'video/webm' })
       const clipUrl = URL.createObjectURL(blob)
       saveHighlightMeta(rec, category, clipUrl)
     } catch (err) {
@@ -664,7 +666,6 @@ export default function VideoAnalyzer() {
       saveHighlightMeta(rec, category, '')
     }
     setCuttingClip(null)
-    setIsPlaying(false)
   }, [])
 
   const saveHighlightMeta = useCallback((rec: AnalysisRecord, category: HighlightCategory, clipUrl: string) => {
@@ -701,6 +702,8 @@ export default function VideoAnalyzer() {
       return next
     })
     setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, savedAsRef: true } : r))
+    setSavedFlash(`${CATEGORY_META[category].icon} ${CATEGORY_META[category].label} highlight saved!`)
+    setTimeout(() => setSavedFlash(null), 3000)
     setTab('highlights')
   }, [])
 
@@ -876,6 +879,19 @@ export default function VideoAnalyzer() {
     <div className="space-y-4">
       <canvas ref={snapshotCanvasRef} className="hidden" />
 
+      {/* Global cutting / saved banner — visible on any tab */}
+      {cuttingClip && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 border border-orion-blue/50 shadow-xl">
+          <Scissors size={16} className="text-orion-blue animate-bounce flex-shrink-0" />
+          <span className="text-orion-blue text-sm font-bold">Cutting {CATEGORY_META[cuttingClip.category].label} clip… please wait</span>
+        </div>
+      )}
+      {savedFlash && !cuttingClip && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 border border-green-400/50 shadow-xl">
+          <span className="text-green-400 text-sm font-bold">{savedFlash} → see Highlights tab 🎬</span>
+        </div>
+      )}
+
       {/* Mode toggle */}
       <div className="flex gap-2 p-1 bg-slate-800/60 rounded-2xl border border-slate-700">
         {(['video', 'camera'] as Mode[]).map(m => (
@@ -963,14 +979,7 @@ export default function VideoAnalyzer() {
                         )}
                       </div>
                     )}
-                    {cuttingClip && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-2">
-                        <Scissors size={28} className="text-orion-blue animate-bounce" />
-                        <p className="text-orion-blue text-sm font-bold">Cutting {CATEGORY_META[cuttingClip.category].label} highlight...</p>
-                        <p className="text-slate-400 text-xs">Recording 6s clip with audio</p>
-                      </div>
-                    )}
-                    {records.length > 0 && !cuttingClip && (
+{records.length > 0 && !cuttingClip && (
                       <div className="absolute top-2 right-2 bg-orion-blue/90 text-white text-xs font-bold px-2 py-0.5 rounded-full">
                         {records.length} captured
                       </div>
