@@ -258,6 +258,7 @@ function drawStickTrajectories(canvas: HTMLCanvasElement, playerLandmarks: any[]
 
 const HighlightPlayer = memo(function HighlightPlayer({ hl }: { hl: HighlightClip }) {
   const videoRef  = useRef<HTMLVideoElement>(null)
+  const imgRef    = useRef<HTMLImageElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [rate, setRate]           = useState(1)
   const [showArrows, setShowArrows] = useState(true)
@@ -269,12 +270,16 @@ const HighlightPlayer = memo(function HighlightPlayer({ hl }: { hl: HighlightCli
     if (videoRef.current) videoRef.current.playbackRate = rate
   }, [rate])
 
-  // Draw arrows on canvas whenever toggle changes or video metadata loads
+  // Draw arrows on canvas — works for both video and snapshot image
   const renderArrows = useCallback(() => {
-    const canvas = canvasRef.current; const video = videoRef.current
-    if (!canvas || !video || !hl.playerLandmarks?.length) return
-    canvas.width  = video.videoWidth  || video.clientWidth  || 640
-    canvas.height = video.videoHeight || video.clientHeight || 360
+    const canvas = canvasRef.current
+    if (!canvas || !hl.playerLandmarks?.length) return
+    const video = videoRef.current
+    const img   = imgRef.current
+    const w = video?.videoWidth || video?.clientWidth || img?.naturalWidth || img?.clientWidth || 640
+    const h = video?.videoHeight || video?.clientHeight || img?.naturalHeight || img?.clientHeight || 360
+    canvas.width  = w
+    canvas.height = h
     if (showArrows) {
       drawStickTrajectories(canvas, hl.playerLandmarks, hl.playerColors || PLAYER_COLORS)
     } else {
@@ -307,7 +312,7 @@ const HighlightPlayer = memo(function HighlightPlayer({ hl }: { hl: HighlightCli
             onPause={() => setPlaying(false)}
           />
         ) : hl.snapshot ? (
-          <img src={hl.snapshot} alt="highlight" className="w-full" style={{ maxHeight: 240, objectFit: 'contain' }} />
+          <img ref={imgRef} src={hl.snapshot} alt="highlight" className="w-full" style={{ maxHeight: 240, objectFit: 'contain' }} onLoad={renderArrows} />
         ) : null}
 
         {/* Arrow canvas overlay */}
@@ -404,6 +409,7 @@ export default function VideoAnalyzer() {
   const [loadingAnalysis, setLoadingAnalysis] = useState<number | null>(null)
   const [highlights, setHighlights]   = useState<HighlightClip[]>([])
   const [hlFilter, setHlFilter]       = useState<HighlightCategory | 'all'>('all')
+  const [counterClips, setCounterClips] = useState<HighlightClip[]>([])
   const [cuttingClip, setCuttingClip] = useState<{ id: number; category: HighlightCategory } | null>(null)
 
   // Recording
@@ -426,6 +432,7 @@ export default function VideoAnalyzer() {
   const blobsRef         = useRef<Blob[]>([])
   const videoSrcRef      = useRef<string | null>(null)
   const videoNameRef     = useRef<string>('')
+  const recordsRef       = useRef<AnalysisRecord[]>([])
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -433,6 +440,7 @@ export default function VideoAnalyzer() {
   }, [])
 
   useEffect(() => { videoSrcRef.current = videoSrc; videoNameRef.current = videoName }, [videoSrc, videoName])
+  useEffect(() => { recordsRef.current = records }, [records])
 
   const handleFile = (file: File) => {
     const url = URL.createObjectURL(file)
@@ -621,10 +629,8 @@ export default function VideoAnalyzer() {
       }
 
       const blobs: Blob[] = []
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm'
-      const mr = new MediaRecorder(stream, { mimeType })
+      const mimeType = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm','video/mp4',''].find(t => !t || MediaRecorder.isTypeSupported(t)) || ''
+      const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
       mr.ondataavailable = e => { if (e.data.size > 0) blobs.push(e.data) }
 
       await new Promise<void>(resolve => {
@@ -665,6 +671,9 @@ export default function VideoAnalyzer() {
     const avgP = (fn: (p: PlayerData) => number) =>
       rec.players.length ? Math.round(rec.players.reduce((s, p) => s + fn(p), 0) / rec.players.length) : 0
 
+    // Look up the latest version of this record from state ref (pros/cons may have arrived async)
+    const latestRec = recordsRef.current.find(r => r.id === rec.id) || rec
+
     const hl: HighlightClip = {
       id: `hl-${rec.id}-${Date.now()}`,
       category,
@@ -675,9 +684,9 @@ export default function VideoAnalyzer() {
       videoTime: rec.videoTime,
       playerCount: rec.players.length,
       techniques: Array.from(new Set(rec.players.map(p => p.technique))),
-      pros: rec.pros,
-      cons: rec.cons,
-      coachTip: rec.coachTip,
+      pros: latestRec.pros,
+      cons: latestRec.cons,
+      coachTip: latestRec.coachTip,
       spinScore: avgP(p => p.spinScore),
       powerScore: avgP(p => p.powerScore),
       reflexScore: avgP(p => p.reflexScore),
@@ -815,7 +824,8 @@ export default function VideoAnalyzer() {
   const startRecording = () => {
     const stream = cameraStream; if (!stream) return
     blobsRef.current = []
-    const mr = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp8,opus' })
+    const mimeType = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4',''].find(t => !t || MediaRecorder.isTypeSupported(t)) || ''
+    const mr = new MediaRecorder(stream, mimeType ? { mimeType } : {})
     mr.ondataavailable = e => { if (e.data.size > 0) blobsRef.current.push(e.data) }
     mr.onstop = () => {
       const blob = new Blob(blobsRef.current, { type: 'video/webm' })
@@ -1013,6 +1023,28 @@ export default function VideoAnalyzer() {
                         ? <div className="flex items-center gap-2 text-slate-400 text-sm"><span className="animate-spin text-purple-400">⚙</span> Analysing...</div>
                         : <div className="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{combatAdvice}</div>
                       }
+                    </div>
+                  )}
+
+                  {counterClips.length > 0 && (
+                    <div className="rounded-2xl border border-purple-400/30 bg-purple-400/5 p-3 space-y-2">
+                      <p className="text-purple-400 text-xs font-bold uppercase tracking-widest">📼 Relevant Saved Highlights</p>
+                      {counterClips.map(hl => {
+                        const m = CATEGORY_META[hl.category]
+                        return (
+                          <div key={hl.id} className="flex items-center gap-2 rounded-xl bg-slate-800/60 border border-slate-700 p-2">
+                            {hl.snapshot && <img src={hl.snapshot} className="w-14 h-9 rounded-lg object-cover flex-shrink-0 border border-slate-700" alt="clip" />}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${m.color}20`, color: m.color }}>{m.icon} {m.label}</span>
+                              </div>
+                              <p className="text-white text-[11px] font-semibold truncate">{hl.techniques.join(' vs ')}</p>
+                              <p className="text-slate-500 text-[10px] truncate">{hl.videoName} · {hl.videoTime}</p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <button onClick={() => setCounterClips([])} className="text-[10px] text-slate-600 hover:text-slate-400 w-full text-center">Dismiss</button>
                     </div>
                   )}
                 </>
@@ -1246,7 +1278,16 @@ export default function VideoAnalyzer() {
                       )}
 
                       <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => { getCombatAdvice(rec); setTab('analyze') }}
+                        <button onClick={() => {
+                          const techs = new Set(rec.players.map(p => p.technique))
+                          const related = highlights.filter(h =>
+                            h.category === 'counter' ||
+                            h.techniques.some(t => techs.has(t))
+                          )
+                          setCounterClips(related)
+                          getCombatAdvice(rec)
+                          setTab('analyze')
+                        }}
                           className="py-2 rounded-xl border border-purple-400/30 text-purple-400 text-xs font-semibold hover:bg-purple-400/10">
                           ⚔️ Counter Moves
                         </button>
