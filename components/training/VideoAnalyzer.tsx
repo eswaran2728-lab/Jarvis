@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, memo } from 'react'
 import { Upload, Play, Pause, SkipBack, Zap, ZapOff, ChevronDown, ChevronUp, Trash2, Camera, Video, FlipHorizontal, Circle, Square, Download, Scissors, Lightbulb, Filter } from 'lucide-react'
 import { loadPoseLandmarker, detectPose, POSE_CONNECTIONS, PLAYER_COLORS, PLAYER_LABELS } from '@/lib/pose/poseDetector'
 import { analyzePose, generateFeedback } from '@/lib/pose/poseAnalysis'
@@ -63,6 +63,8 @@ type HighlightClip = {
   reflexScore: number
   speedScore: number
   createdAt: string
+  playerLandmarks?: any[][]   // pose landmarks per player for arrow overlay
+  playerColors?: string[]
 }
 
 type Tab = 'analyze' | 'records' | 'highlights' | 'recordings'
@@ -113,6 +115,266 @@ function ScoreBar({ score, max = 10, color }: { score: number; max?: number; col
     </div>
   )
 }
+
+// ─── Arrow drawing ────────────────────────────────────────────────────────────
+
+function drawArrowhead(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, color: string, size = 14) {
+  const angle = Math.atan2(y2 - y1, x2 - x1)
+  ctx.save()
+  ctx.fillStyle = color
+  ctx.strokeStyle = color
+  ctx.lineWidth = 2
+  ctx.translate(x2, y2)
+  ctx.rotate(angle)
+  ctx.beginPath()
+  ctx.moveTo(0, 0)
+  ctx.lineTo(-size, -size / 2.2)
+  ctx.lineTo(-size, size / 2.2)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawStickTrajectories(canvas: HTMLCanvasElement, playerLandmarks: any[][], playerColors: string[]) {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  const W = canvas.width; const H = canvas.height
+
+  playerLandmarks.forEach((lm, pIdx) => {
+    if (!lm?.length) return
+    const color = playerColors[pIdx] || PLAYER_COLORS[pIdx] || '#00d4ff'
+
+    const rS = lm[12]; const lS = lm[11]   // shoulders
+    const rE = lm[14]; const lE = lm[13]   // elbows
+    const rW = lm[16]; const lW = lm[15]   // wrists (stick hands)
+    const rH = lm[24]; const lH = lm[23]   // hips
+    const rK = lm[26]; const lK = lm[25]   // knees
+    const rA = lm[28]; const lA = lm[27]   // ankles
+
+    if (!rS || !lS || !rW || !lW) return
+
+    // Dominant hand = whichever wrist is higher (lower y = higher)
+    const domW = rW.y < lW.y ? rW : lW
+    const domS = rW.y < lW.y ? rS : lS
+    const domE = rW.y < lW.y ? rE : lE
+
+    // ── Path: stick origin (wrist) → target zone ──────────────────────────
+    // Direction vector: elbow→wrist extended
+    const dx = domW.x - domE.x
+    const dy = domW.y - domE.y
+    const len = Math.sqrt(dx * dx + dy * dy) || 0.001
+    const nx = dx / len; const ny = dy / len
+
+    // Stick tip (half arm-length past wrist along the same direction)
+    const armLen = Math.sqrt(
+      Math.pow(domW.x - domS.x, 2) + Math.pow(domW.y - domS.y, 2)
+    )
+    const tipX = (domW.x + nx * armLen * 0.9) * W
+    const tipY = (domW.y + ny * armLen * 0.9) * H
+
+    // Origin: shoulder
+    const originX = domS.x * W
+    const originY = domS.y * H
+
+    // Wrist / grip point
+    const gripX = domW.x * W
+    const gripY = domW.y * H
+
+    // Infer target zone based on tip direction
+    const avgAnkleY = ((rA?.y || 0.9) + (lA?.y || 0.9)) / 2
+    const avgHipY = ((rH?.y || 0.5) + (lH?.y || 0.5)) / 2
+    const avgKneeY = ((rK?.y || 0.7) + (lK?.y || 0.7)) / 2
+
+    // Classify strike zone
+    let zoneLabel = ''
+    let zoneX = tipX, zoneY = tipY
+    if (ny > 0.3) {
+      // Downward strike
+      if (tipY / H > avgAnkleY - 0.1) { zoneLabel = 'Calf / Feet'; zoneY = avgAnkleY * H - 10 }
+      else if (tipY / H > avgKneeY)   { zoneLabel = 'Knee / Shin'; zoneY = avgKneeY * H }
+      else                              { zoneLabel = 'Body / Hip';  zoneY = avgHipY * H }
+      zoneX = (domS.x * 0.6 + (rW.y < lW.y ? (lS.x) : (rS.x)) * 0.4) * W
+    } else if (ny < -0.3) {
+      zoneLabel = 'Head / Shoulder'; zoneY = domS.y * H - 30; zoneX = (1 - domS.x) * W
+    } else {
+      // Horizontal / diagonal
+      zoneLabel = 'Body / Ribs'
+      zoneX = (1 - domW.x) * W  // opposite side
+      zoneY = avgHipY * H
+    }
+
+    // ── Draw: origin dot ──────────────────────────────────────────────────
+    ctx.beginPath()
+    ctx.arc(originX, originY, 7, 0, Math.PI * 2)
+    ctx.fillStyle = color; ctx.globalAlpha = 0.9; ctx.fill()
+    ctx.globalAlpha = 1
+
+    // ── Draw: grip dot ────────────────────────────────────────────────────
+    ctx.beginPath()
+    ctx.arc(gripX, gripY, 5, 0, Math.PI * 2)
+    ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.8; ctx.fill()
+    ctx.globalAlpha = 1
+
+    // ── Draw: trajectory line (origin → tip) ──────────────────────────────
+    ctx.setLineDash([10, 6])
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.globalAlpha = 0.9
+    ctx.beginPath(); ctx.moveTo(originX, originY); ctx.lineTo(tipX, tipY); ctx.stroke()
+    ctx.setLineDash([]); ctx.globalAlpha = 1
+
+    // ── Draw: arrowhead at tip ────────────────────────────────────────────
+    drawArrowhead(ctx, gripX, gripY, tipX, tipY, color, 16)
+
+    // ── Draw: target zone ring ────────────────────────────────────────────
+    ctx.beginPath(); ctx.arc(zoneX, zoneY, 18, 0, Math.PI * 2)
+    ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.75; ctx.stroke()
+    ctx.beginPath(); ctx.arc(zoneX, zoneY, 8, 0, Math.PI * 2)
+    ctx.fillStyle = color; ctx.globalAlpha = 0.5; ctx.fill()
+    ctx.globalAlpha = 1
+
+    // ── Draw: dashed line from tip → target ──────────────────────────────
+    ctx.setLineDash([6, 8])
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.5
+    ctx.beginPath(); ctx.moveTo(tipX, tipY); ctx.lineTo(zoneX, zoneY); ctx.stroke()
+    ctx.setLineDash([]); ctx.globalAlpha = 1
+    drawArrowhead(ctx, tipX, tipY, zoneX, zoneY, color, 12)
+
+    // ── Labels ────────────────────────────────────────────────────────────
+    ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = color; ctx.globalAlpha = 0.95
+    ctx.fillText(`P${pIdx + 1}`, originX + 9, originY - 5)
+    if (zoneLabel) {
+      ctx.font = 'bold 10px sans-serif'
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.85
+      const tw = ctx.measureText(zoneLabel).width
+      ctx.fillRect(zoneX - tw / 2 - 4, zoneY + 22, tw + 8, 14)
+      ctx.fillStyle = '#000'; ctx.globalAlpha = 1
+      ctx.fillText(zoneLabel, zoneX - tw / 2, zoneY + 32)
+    }
+    ctx.globalAlpha = 1
+  })
+}
+
+// ─── Highlight Video Player ───────────────────────────────────────────────────
+
+const HighlightPlayer = memo(function HighlightPlayer({ hl }: { hl: HighlightClip }) {
+  const videoRef  = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [rate, setRate]           = useState(1)
+  const [showArrows, setShowArrows] = useState(true)
+  const [playing, setPlaying]     = useState(false)
+  const meta = CATEGORY_META[hl.category]
+
+  // Sync playback rate
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.playbackRate = rate
+  }, [rate])
+
+  // Draw arrows on canvas whenever toggle changes or video metadata loads
+  const renderArrows = useCallback(() => {
+    const canvas = canvasRef.current; const video = videoRef.current
+    if (!canvas || !video || !hl.playerLandmarks?.length) return
+    canvas.width  = video.videoWidth  || video.clientWidth  || 640
+    canvas.height = video.videoHeight || video.clientHeight || 360
+    if (showArrows) {
+      drawStickTrajectories(canvas, hl.playerLandmarks, hl.playerColors || PLAYER_COLORS)
+    } else {
+      const ctx = canvas.getContext('2d')
+      ctx?.clearRect(0, 0, canvas.width, canvas.height)
+    }
+  }, [showArrows, hl.playerLandmarks, hl.playerColors])
+
+  useEffect(() => { renderArrows() }, [renderArrows])
+
+  const togglePlay = () => {
+    const v = videoRef.current; if (!v) return
+    playing ? v.pause() : v.play()
+    setPlaying(!playing)
+  }
+
+  return (
+    <div className="space-y-2">
+      {/* Video + canvas overlay */}
+      <div className="relative rounded-xl overflow-hidden bg-black border" style={{ borderColor: `${meta.color}40` }}>
+        {hl.clipUrl ? (
+          <video
+            ref={videoRef}
+            src={hl.clipUrl}
+            loop
+            className="w-full"
+            style={{ maxHeight: 240 }}
+            onLoadedMetadata={renderArrows}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+          />
+        ) : hl.snapshot ? (
+          <img src={hl.snapshot} alt="highlight" className="w-full" style={{ maxHeight: 240, objectFit: 'contain' }} />
+        ) : null}
+
+        {/* Arrow canvas overlay */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{ mixBlendMode: 'screen' }}
+        />
+
+        {/* Play button overlay (if video) */}
+        {hl.clipUrl && (
+          <button
+            onClick={togglePlay}
+            className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/20 transition-all"
+          >
+            {!playing && (
+              <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center border border-white/30">
+                <Play size={20} className="text-white ml-1" />
+              </div>
+            )}
+          </button>
+        )}
+
+        {/* Speed badge */}
+        <div className="absolute top-2 left-2 bg-black/70 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ color: meta.color }}>
+          {rate}x
+        </div>
+      </div>
+
+      {/* Controls row */}
+      <div className="flex items-center gap-2">
+        {/* Speed buttons */}
+        <div className="flex gap-1 flex-1">
+          {([1, 0.5, 0.25] as const).map(r => (
+            <button key={r} onClick={() => setRate(r)}
+              className="flex-1 py-1.5 rounded-lg text-xs font-bold transition-all"
+              style={rate === r
+                ? { background: meta.color, color: '#000' }
+                : { background: '#1e293b', color: '#64748b' }}>
+              {r === 1 ? '1× Normal' : r === 0.5 ? '½× Slow' : '¼× Super Slow'}
+            </button>
+          ))}
+        </div>
+
+        {/* Arrow toggle */}
+        {hl.playerLandmarks?.length ? (
+          <button onClick={() => setShowArrows(v => !v)}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-shrink-0"
+            style={showArrows
+              ? { background: `${meta.color}30`, border: `1px solid ${meta.color}60`, color: meta.color }
+              : { background: '#1e293b', border: '1px solid #334155', color: '#64748b' }}>
+            🏹 Arrows
+          </button>
+        ) : null}
+      </div>
+
+      {/* Legend */}
+      {showArrows && hl.playerLandmarks?.length ? (
+        <div className="flex flex-wrap gap-2 text-[10px] text-slate-400">
+          <span>● Origin (shoulder)</span>
+          <span>──▶ Stick path</span>
+          <span>◎ Target zone</span>
+        </div>
+      ) : null}
+    </div>
+  )
+})
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -421,6 +683,8 @@ export default function VideoAnalyzer() {
       reflexScore: avgP(p => p.reflexScore),
       speedScore: avgP(p => speedScore10(p.attackSpeed)),
       createdAt: new Date().toISOString(),
+      playerLandmarks: rec.players.map(p => p.landmarks),
+      playerColors: rec.players.map(p => p.color),
     }
     setHighlights(prev => {
       const next = [hl, ...prev]
@@ -1068,21 +1332,10 @@ export default function VideoAnalyzer() {
                       </button>
                     </div>
 
-                    {/* Video clip */}
-                    {hl.clipUrl ? (
-                      <div className="px-3.5 pb-2">
-                        <video src={hl.clipUrl} controls loop className="w-full rounded-xl border border-slate-700" style={{ maxHeight: 220 }} />
-                      </div>
-                    ) : hl.snapshot ? (
-                      <div className="px-3.5 pb-2">
-                        <div className="relative">
-                          <img src={hl.snapshot} alt="highlight" className="w-full rounded-xl border border-slate-700" />
-                          <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-xl">
-                            <p className="text-slate-400 text-xs">Clip not available · snapshot only</p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
+                    {/* Video + speed + arrows */}
+                    <div className="px-3.5 pb-2">
+                      <HighlightPlayer hl={hl} />
+                    </div>
 
                     {/* Score bars */}
                     <div className="px-3.5 pb-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
