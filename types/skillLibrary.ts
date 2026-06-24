@@ -86,6 +86,28 @@ export type SkillFolder = {
   clipCount?: number
 }
 
+// A reference clip is a short analyzed clip saved as a teaching example
+// ORION uses these to suggest relevant past clips when new videos are uploaded
+export type ReferenceClip = {
+  id: string
+  title: string
+  videoName: string
+  snapshot: string          // base64 JPEG thumbnail
+  createdAt: string
+  techniques: string[]      // detected technique names
+  playerCount: number       // how many players detected
+  pros: string[]            // what was done well
+  cons: string[]            // what needs improvement
+  coachTip: string          // ORION's main coaching point
+  tags: string[]            // searchable tags
+  metrics: {
+    avgScore: number
+    avgBalance: number
+    avgSpeed: number
+    avgPower: number
+  }
+}
+
 export const SKILL_FOLDERS: SkillFolder[] = [
   { id: 'combat',            name: 'Combat Skills',          category: 'combat',            icon: '⚔️',  color: '#00d4ff', description: 'Full combat exchanges, scoring moments, match scenarios' },
   { id: 'attack',            name: 'Attack Techniques',      category: 'attack',            icon: '🥢',  color: '#f97316', description: 'Strike types, directions, legal targets, attack patterns' },

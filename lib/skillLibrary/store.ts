@@ -1,14 +1,14 @@
 'use client'
 // ORION Skill Library Store — localStorage
 // TODO: Replace with Supabase client for persistent cloud storage
-// Migration: swap localStorage calls with supabase.from('skill_clips').insert/select
 
-import { SkillClip, VideoAnalysisSession } from '@/types/skillLibrary'
+import { SkillClip, VideoAnalysisSession, ReferenceClip } from '@/types/skillLibrary'
 import { MOCK_CLIPS, MOCK_SESSION } from './mockData'
 
 const CLIPS_KEY = 'orion_skill_clips'
 const SESSIONS_KEY = 'orion_sessions'
 const INITIALIZED_KEY = 'orion_library_initialized'
+const REF_CLIPS_KEY = 'orion_reference_clips'
 
 function isClient() { return typeof window !== 'undefined' }
 
@@ -177,4 +177,47 @@ export async function analyzeVideoMock(
   saveClips(baseClips)
   saveSession(session)
   return session
+}
+
+// ─── Reference Clips (short analyzed clips ORION learns from) ─────────────────
+
+export function getReferenceClips(): ReferenceClip[] {
+  if (!isClient()) return []
+  try {
+    const raw = localStorage.getItem(REF_CLIPS_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+export function saveReferenceClip(clip: ReferenceClip) {
+  if (!isClient()) return
+  const existing = getReferenceClips()
+  localStorage.setItem(REF_CLIPS_KEY, JSON.stringify([clip, ...existing]))
+}
+
+export function deleteReferenceClip(id: string) {
+  if (!isClient()) return
+  const updated = getReferenceClips().filter(c => c.id !== id)
+  localStorage.setItem(REF_CLIPS_KEY, JSON.stringify(updated))
+}
+
+// Match new video's detected techniques against saved reference clips
+// Returns the top matching reference clips sorted by relevance score
+export function getSuggestedClips(techniques: string[], tags: string[] = []): ReferenceClip[] {
+  const refs = getReferenceClips()
+  if (!refs.length) return []
+
+  const newTechSet = new Set([...techniques, ...tags].map(t => t.toLowerCase()))
+
+  return refs
+    .map(ref => {
+      const refSet = new Set([...ref.techniques, ...ref.tags].map(t => t.toLowerCase()))
+      let score = 0
+      newTechSet.forEach(t => { if (refSet.has(t)) score++ })
+      return { clip: ref, score }
+    })
+    .filter(r => r.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map(r => r.clip)
 }

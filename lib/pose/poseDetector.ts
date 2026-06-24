@@ -7,7 +7,6 @@ let isLoading = false
 export async function loadPoseLandmarker() {
   if (poseLandmarker) return poseLandmarker
   if (isLoading) {
-    // Wait for loading
     await new Promise(resolve => setTimeout(resolve, 500))
     return poseLandmarker
   }
@@ -23,7 +22,7 @@ export async function loadPoseLandmarker() {
         delegate: 'GPU',
       },
       runningMode: 'VIDEO',
-      numPoses: 1,
+      numPoses: 4, // detect up to 4 players simultaneously
     })
     isLoading = false
     return poseLandmarker
@@ -43,21 +42,19 @@ export function detectPose(video: HTMLVideoElement, timestamp: number) {
   }
 }
 
+// Colors for each detected player
+export const PLAYER_COLORS = ['#00d4ff', '#00ff88', '#f97316', '#a855f7']
+export const PLAYER_LABELS = ['Player 1', 'Player 2', 'Player 3', 'Player 4']
+
 // MediaPipe Pose landmark indices
 export const POSE_LANDMARKS = {
   NOSE: 0,
-  LEFT_SHOULDER: 11,
-  RIGHT_SHOULDER: 12,
-  LEFT_ELBOW: 13,
-  RIGHT_ELBOW: 14,
-  LEFT_WRIST: 15,
-  RIGHT_WRIST: 16,
-  LEFT_HIP: 23,
-  RIGHT_HIP: 24,
-  LEFT_KNEE: 25,
-  RIGHT_KNEE: 26,
-  LEFT_ANKLE: 27,
-  RIGHT_ANKLE: 28,
+  LEFT_SHOULDER: 11, RIGHT_SHOULDER: 12,
+  LEFT_ELBOW: 13, RIGHT_ELBOW: 14,
+  LEFT_WRIST: 15, RIGHT_WRIST: 16,
+  LEFT_HIP: 23, RIGHT_HIP: 24,
+  LEFT_KNEE: 25, RIGHT_KNEE: 26,
+  LEFT_ANKLE: 27, RIGHT_ANKLE: 28,
 }
 
 export const POSE_CONNECTIONS = [
