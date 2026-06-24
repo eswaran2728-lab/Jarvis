@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Swords, Video, ClipboardList, Library, BookOpen } from 'lucide-react'
+import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Swords, Video, ClipboardList, BookOpen } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', icon: Home, label: 'Dashboard' },
@@ -10,7 +10,6 @@ const navItems = [
   { href: '/training/silambam', icon: Swords, label: 'Silambam' },
   { href: '/training/silambam/rules', icon: BookOpen, label: 'Combat Rules' },
   { href: '/training/video', icon: Video, label: 'Video Analysis' },
-  { href: '/training/skill-library', icon: Library, label: 'Skill Library' },
   { href: '/training/plan', icon: ClipboardList, label: 'Athlete Plan' },
   { href: '/tasks', icon: CheckSquare, label: 'Tasks' },
   { href: '/reminders', icon: Bell, label: 'Reminders' },

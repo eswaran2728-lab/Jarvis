@@ -2,19 +2,18 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
-import { Home, MessageCircle, Dumbbell, CheckSquare, Settings, Swords, Video, Library, BookOpen, Bell, TrendingUp, ClipboardList, X, Menu } from 'lucide-react'
+import { Home, MessageCircle, Swords, Video, BookOpen, Settings, Dumbbell, CheckSquare, Bell, TrendingUp, ClipboardList, X, Menu } from 'lucide-react'
 
 const mainNav = [
   { href: '/dashboard', icon: Home, label: 'Home' },
   { href: '/assistant', icon: MessageCircle, label: 'Chat' },
   { href: '/training/video', icon: Video, label: 'Video' },
-  { href: '/training/skill-library', icon: Library, label: 'Skills' },
+  { href: '/training/silambam', icon: Swords, label: 'Silambam' },
   { href: '/more', icon: Menu, label: 'More' },
 ]
 
 const moreItems = [
   { href: '/training', icon: Dumbbell, label: 'Training' },
-  { href: '/training/silambam', icon: Swords, label: 'Silambam' },
   { href: '/training/silambam/rules', icon: BookOpen, label: 'Combat Rules' },
   { href: '/training/plan', icon: ClipboardList, label: 'Athlete Plan' },
   { href: '/tasks', icon: CheckSquare, label: 'Tasks' },
