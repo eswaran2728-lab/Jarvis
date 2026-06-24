@@ -258,6 +258,43 @@ export function calculatePower(speedMs: number, weightKg: number): number {
   return Math.min(100, Math.round(ke / 5))
 }
 
+// Detect stick spin score (0–10) by measuring wrist + body angular velocity between frames
+export function detectSpinScore(prev: any[] | null, curr: any[], dtMs: number): number {
+  if (!prev || dtMs <= 0 || dtMs > 2000) return 0
+  const pRS = prev[12]; const pRW = prev[16]; const pLS = prev[11]
+  const cRS = curr[12]; const cRW = curr[16]; const cLS = curr[11]
+  if (!pRS || !cRS || !pRW || !cRW) return 0
+
+  // Wrist angle relative to shoulder
+  const prevWristAngle = Math.atan2(pRW.y - pRS.y, pRW.x - pRS.x)
+  const currWristAngle = Math.atan2(cRW.y - cRS.y, cRW.x - cRS.x)
+  let wristDelta = Math.abs(currWristAngle - prevWristAngle)
+  if (wristDelta > Math.PI) wristDelta = 2 * Math.PI - wristDelta
+
+  // Body shoulder-line rotation
+  const prevBodyAngle = Math.atan2(pRS.y - pLS.y, pRS.x - pLS.x)
+  const currBodyAngle = Math.atan2(cRS.y - cLS.y, cRS.x - cLS.x)
+  let bodyDelta = Math.abs(currBodyAngle - prevBodyAngle)
+  if (bodyDelta > Math.PI) bodyDelta = 2 * Math.PI - bodyDelta
+
+  const wristAngVel = wristDelta / (dtMs / 1000)
+  const bodyAngVel = bodyDelta / (dtMs / 1000)
+  // Full π rotation per second = spin score 10
+  return Math.min(10, Math.round((wristAngVel + bodyAngVel * 2) / Math.PI * 3.3))
+}
+
+// Reflex score 0–10 based on reaction speed + attack speed
+export function calcReflexScore(speedMs: number, dtMs: number): number {
+  const speedScore = Math.min(5, Math.round(speedMs / 5 * 5 * 10) / 10)
+  const timeScore = dtMs < 200 ? 5 : dtMs < 400 ? 4 : dtMs < 600 ? 3 : dtMs < 800 ? 2 : 1
+  return Math.min(10, Math.round(speedScore + timeScore))
+}
+
+// Power as 0–10 score
+export function powerScore(power: number): number {
+  return Math.min(10, Math.round(power / 10))
+}
+
 // Footwork score from ankle movement variability
 export function calcFootworkScore(frames: MotionFrame[]): number {
   if (frames.length < 3) return 50

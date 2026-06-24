@@ -1,10 +1,10 @@
 'use client'
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Upload, Play, Pause, SkipBack, Zap, ZapOff, ChevronDown, ChevronUp, Trash2, Trophy, Camera, Video, FlipHorizontal, Circle, Square, Download, BookmarkPlus, Lightbulb } from 'lucide-react'
+import { Upload, Play, Pause, SkipBack, Zap, ZapOff, ChevronDown, ChevronUp, Trash2, Camera, Video, FlipHorizontal, Circle, Square, Download, BookmarkPlus, Lightbulb } from 'lucide-react'
 import { loadPoseLandmarker, detectPose, POSE_CONNECTIONS, PLAYER_COLORS, PLAYER_LABELS } from '@/lib/pose/poseDetector'
 import { analyzePose, generateFeedback } from '@/lib/pose/poseAnalysis'
 import { PoseMetrics } from '@/types'
-import { calculateAttackSpeed, calculatePower, detectTechnique, estimateHeight, estimateWeight, generateMotionRemarks } from '@/lib/pose/motionAnalysis'
+import { calculateAttackSpeed, calculatePower, detectTechnique, estimateHeight, estimateWeight, generateMotionRemarks, detectSpinScore, calcReflexScore, powerScore } from '@/lib/pose/motionAnalysis'
 import { saveReferenceClip, getReferenceClips, deleteReferenceClip, getSuggestedClips } from '@/lib/skillLibrary/store'
 import { ReferenceClip } from '@/types/skillLibrary'
 
@@ -14,6 +14,9 @@ type PlayerData = {
   feedback: string[]
   attackSpeed: number
   power: number
+  powerScore: number   // 0-10
+  spinScore: number    // 0-10
+  reflexScore: number  // 0-10
   technique: string
   estimatedHeight: number
   estimatedWeight: number
@@ -26,6 +29,8 @@ type AnalysisRecord = {
   id: number
   timestamp: string
   videoTime: string
+  videoTimeSec?: number
+  videoSrc?: string
   players: PlayerData[]
   snapshot?: string
   pros?: string[]
@@ -47,6 +52,18 @@ function formatTime(t: number) {
 
 function formatDur(s: number) {
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+}
+
+function ScoreBar({ score, max = 10, color }: { score: number; max?: number; color: string }) {
+  const pct = Math.round((score / max) * 100)
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+      </div>
+      <span className="text-[10px] font-bold w-8 text-right" style={{ color }}>{score}/{max}</span>
+    </div>
+  )
 }
 
 export default function VideoAnalyzer() {
@@ -93,17 +110,18 @@ export default function VideoAnalyzer() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordTimerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
   const blobsRef         = useRef<Blob[]>([])
+  const videoSrcRef      = useRef<string | null>(null)
+  const videoNameRef     = useRef<string>('')
 
   useEffect(() => { setRefClips(getReferenceClips()) }, [])
+  useEffect(() => { videoSrcRef.current = videoSrc; videoNameRef.current = videoName }, [videoSrc, videoName])
 
   const handleFile = (file: File) => {
     const url = URL.createObjectURL(file)
     setVideoSrc(url); setVideoName(file.name)
     setFullProgress(0); prevLandmarksRef.current = []
-    // Check for suggestions based on filename keywords
     const tags = file.name.toLowerCase().replace(/[^a-z0-9]/g, ' ').split(' ').filter(Boolean)
-    const suggested = getSuggestedClips([], tags)
-    setSuggestions(suggested)
+    setSuggestions(getSuggestedClips([], tags))
   }
 
   const handleDrop = (e: React.DragEvent) => {
@@ -112,7 +130,6 @@ export default function VideoAnalyzer() {
     if (file?.type.startsWith('video/')) handleFile(file)
   }
 
-  // Draw all detected players with different colours
   const drawAllPlayers = useCallback((allLandmarks: any[][], canvasEl: HTMLCanvasElement, sourceEl: HTMLVideoElement) => {
     const ctx = canvasEl.getContext('2d')
     if (!ctx) return
@@ -123,7 +140,6 @@ export default function VideoAnalyzer() {
 
     allLandmarks.forEach((landmarks, pIdx) => {
       const color = PLAYER_COLORS[pIdx] || '#ffffff'
-      // Skeleton
       ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.85
       POSE_CONNECTIONS.forEach(([a, b]) => {
         if (landmarks[a]?.visibility > 0.5 && landmarks[b]?.visibility > 0.5) {
@@ -133,7 +149,6 @@ export default function VideoAnalyzer() {
           ctx.stroke()
         }
       })
-      // Joints
       ctx.globalAlpha = 1
       landmarks.forEach((p: any, i: number) => {
         if (p.visibility > 0.5) {
@@ -142,7 +157,6 @@ export default function VideoAnalyzer() {
           ctx.fillStyle = color; ctx.fill()
         }
       })
-      // Player label above head
       const nose = landmarks[0]
       if (nose?.visibility > 0.5) {
         ctx.globalAlpha = 0.9
@@ -151,7 +165,7 @@ export default function VideoAnalyzer() {
         ctx.fillText(PLAYER_LABELS[pIdx] || `P${pIdx + 1}`, nose.x * W - 24, nose.y * H - 14)
         ctx.globalAlpha = 1
       }
-      // Wrist speed circles
+      // Wrist spin circles — larger when spin is higher
       ;[15, 16].forEach(wi => {
         const w = landmarks[wi]
         if (w?.visibility > 0.5) {
@@ -181,6 +195,9 @@ export default function VideoAnalyzer() {
     const w = estimateWeight(h, lm)
     const speed = calculateAttackSpeed(prevLandmarksRef.current[pIdx] || null, lm, dt, h, 480)
     const power = calculatePower(speed, w)
+    const spin = detectSpinScore(prevLandmarksRef.current[pIdx] || null, lm, dt)
+    const reflex = calcReflexScore(speed, dt)
+    const pScore = powerScore(power)
     const technique = detectTechnique(lm)
     const motionM = {
       attackSpeed: speed, reactionTime: dt, power, strikeCount: 0,
@@ -193,15 +210,18 @@ export default function VideoAnalyzer() {
     motionM.remarks = generateMotionRemarks(motionM)
     return {
       landmarks: lm, metrics: m, feedback: generateFeedback(m),
-      attackSpeed: speed, power, technique,
-      estimatedHeight: h, estimatedWeight: w,
+      attackSpeed: speed, power, powerScore: pScore, spinScore: spin, reflexScore: reflex,
+      technique, estimatedHeight: h, estimatedWeight: w,
       remarks: motionM.remarks,
       color: PLAYER_COLORS[pIdx] || '#ffffff',
       label: PLAYER_LABELS[pIdx] || `Player ${pIdx + 1}`,
     }
   }, [])
 
-  const buildRecord = useCallback((allLandmarks: any[][], videoTimeStr: string, snapshot?: string): AnalysisRecord => {
+  const buildRecord = useCallback((
+    allLandmarks: any[][], videoTimeStr: string, snapshot?: string,
+    timeSec?: number
+  ): AnalysisRecord => {
     const now = performance.now()
     const players = allLandmarks.map((lm, i) => buildPlayerData(lm, i))
     prevLandmarksRef.current = allLandmarks
@@ -210,9 +230,11 @@ export default function VideoAnalyzer() {
       id: Date.now() + Math.random(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
       videoTime: videoTimeStr,
-      players, snapshot, videoName,
+      videoTimeSec: timeSec,
+      videoSrc: videoSrcRef.current || undefined,
+      players, snapshot, videoName: videoNameRef.current,
     }
-  }, [buildPlayerData, videoName])
+  }, [buildPlayerData])
 
   const getCombatAdvice = useCallback(async (rec: AnalysisRecord) => {
     if (!rec.players.length) return
@@ -234,11 +256,9 @@ export default function VideoAnalyzer() {
     setLoadingAdvice(false)
   }, [])
 
-  // Get pros/cons analysis from AI
-  const analyseClipProscons = useCallback(async (recId: number) => {
-    const rec = records.find(r => r.id === recId)
-    if (!rec) return
-    setLoadingAnalysis(recId)
+  // Receives the record directly (avoids stale-closure issue with records state)
+  const analyseClipProscons = useCallback(async (rec: AnalysisRecord) => {
+    setLoadingAnalysis(rec.id)
     try {
       const res = await fetch('/api/clip-analysis', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -248,6 +268,9 @@ export default function VideoAnalyzer() {
             balance: p.metrics.balance,
             attackSpeed: p.attackSpeed,
             power: p.power,
+            powerScore: p.powerScore,
+            spinScore: p.spinScore,
+            reflexScore: p.reflexScore,
             kneeBend: p.metrics.kneeBend,
             technique: p.technique,
           })),
@@ -256,23 +279,18 @@ export default function VideoAnalyzer() {
         }),
       })
       const data = await res.json()
-      setRecords(prev => prev.map(r => r.id === recId
+      setRecords(prev => prev.map(r => r.id === rec.id
         ? { ...r, pros: data.pros, cons: data.cons, coachTip: data.coachTip, tags: data.tags }
         : r
       ))
-      // Auto-update suggestions after analysis
       const techniques = rec.players.map(p => p.technique)
       setSuggestions(getSuggestedClips(techniques, data.tags || []))
     } catch { /* silent */ }
     setLoadingAnalysis(null)
-  }, [records])
+  }, [])
 
-  // Save record as reference clip for future suggestions
   const saveAsReference = useCallback((rec: AnalysisRecord) => {
     if (!rec.snapshot || !rec.pros) return
-    const avgMetrics = (key: keyof Pick<PlayerData, 'metrics'>) =>
-      rec.players.reduce((s, p) => s + p.metrics[key as keyof PoseMetrics] as unknown as number, 0) / (rec.players.length || 1)
-
     const refClip: ReferenceClip = {
       id: `ref-${rec.id}`,
       title: `${rec.players.map(p => p.technique).join(' vs ')} — ${rec.videoName || 'Clip'}`,
@@ -308,13 +326,12 @@ export default function VideoAnalyzer() {
       if (allLandmarks.length > 0) {
         drawAllPlayers(allLandmarks, canvas, video)
         const snapshot = captureSnapshot(video, canvas)
-        const rec = buildRecord(allLandmarks, formatTime(video.currentTime), snapshot)
+        const timeSec = video.currentTime
+        const rec = buildRecord(allLandmarks, formatTime(timeSec), snapshot, timeSec)
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
         if (withAdvice) getCombatAdvice(rec)
-        // Auto fetch pros/cons
-        setTimeout(() => analyseClipProscons(rec.id), 100)
-        // Update suggestions from detected techniques
+        analyseClipProscons(rec)
         const techniques = allLandmarks.map((_: any, i: number) => {
           try { return detectTechnique(allLandmarks[i]) } catch { return '' }
         }).filter(Boolean)
@@ -342,9 +359,10 @@ export default function VideoAnalyzer() {
           if (allLandmarks.length > 0) {
             drawAllPlayers(allLandmarks, canvas, video)
             const snapshot = captureSnapshot(video, canvas)
-            const rec = buildRecord(allLandmarks, formatTime(t), snapshot)
+            const rec = buildRecord(allLandmarks, formatTime(t), snapshot, t)
             setRecords(prev => [rec, ...prev])
             setFullProgress(Math.round((t / video.duration) * 100))
+            analyseClipProscons(rec)
           }
           resolve()
         }
@@ -354,7 +372,7 @@ export default function VideoAnalyzer() {
       t += step
     }
     setFullProgress(100); setFullAnalysing(false)
-  }, [drawAllPlayers, buildRecord, captureSnapshot])
+  }, [drawAllPlayers, buildRecord, captureSnapshot, analyseClipProscons])
 
   useEffect(() => {
     const video = videoRef.current
@@ -442,7 +460,7 @@ export default function VideoAnalyzer() {
       const snapshot = captureSnapshot(cam, canvas)
       const rec = buildRecord(allLandmarks, 'Live', snapshot)
       setRecords(prev => [rec, ...prev]); setExpandedId(rec.id); setTab('records')
-      setTimeout(() => analyseClipProscons(rec.id), 100)
+      analyseClipProscons(rec)
     }
   }
 
@@ -549,7 +567,7 @@ export default function VideoAnalyzer() {
                     )}
                     {records.length > 0 && (
                       <div className="absolute top-2 right-2 bg-orion-blue/90 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                        {records.length} frames
+                        {records.length} captured
                       </div>
                     )}
                   </div>
@@ -630,23 +648,25 @@ export default function VideoAnalyzer() {
                     <FlipHorizontal size={18} />
                   </button>
                 )}
-                {/* Live player count badge */}
                 {livePlayers.length > 0 && (
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 rounded-full px-3 py-1">
                     <span className="text-white text-xs font-bold">{livePlayers.length} player{livePlayers.length > 1 ? 's' : ''} detected</span>
                   </div>
                 )}
-                {/* Live metrics — all players */}
                 {livePlayers.length > 0 && (
                   <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/90">
                     <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
                       {livePlayers.map((p, i) => (
-                        <div key={i} className="flex-shrink-0 rounded-xl p-2 bg-black/60 border min-w-[110px]"
+                        <div key={i} className="flex-shrink-0 rounded-xl p-2 bg-black/60 border min-w-[130px]"
                           style={{ borderColor: `${p.color}40` }}>
                           <p className="text-[10px] font-bold mb-1" style={{ color: p.color }}>{p.label}</p>
-                          <div className="grid grid-cols-2 gap-0.5 text-center">
-                            <div><p style={{ color: p.color }} className="text-xs font-bold">{p.metrics.overallScore}</p><p className="text-[9px] text-slate-500">Score</p></div>
-                            <div><p style={{ color: p.color }} className="text-xs font-bold">{p.attackSpeed}m/s</p><p className="text-[9px] text-slate-500">Speed</p></div>
+                          <div className="space-y-0.5">
+                            <div className="flex justify-between text-[9px]"><span className="text-slate-400">Spin</span></div>
+                            <ScoreBar score={p.spinScore} color={p.color} />
+                            <div className="flex justify-between text-[9px]"><span className="text-slate-400">Power</span></div>
+                            <ScoreBar score={p.powerScore} color={p.color} />
+                            <div className="flex justify-between text-[9px]"><span className="text-slate-400">Reflex</span></div>
+                            <ScoreBar score={p.reflexScore} color={p.color} />
                           </div>
                         </div>
                       ))}
@@ -688,7 +708,7 @@ export default function VideoAnalyzer() {
           ) : (
             <>
               <div className="flex justify-between items-center">
-                <p className="text-xs text-slate-500">{records.length} captures — {records.reduce((s, r) => s + r.players.length, 0)} total players detected</p>
+                <p className="text-xs text-slate-500">{records.length} captures · {records.reduce((s, r) => s + r.players.length, 0)} total players</p>
                 <button onClick={() => setRecords([])} className="text-xs text-red-400/60 hover:text-red-400 flex items-center gap-1"><Trash2 size={12} /> Clear all</button>
               </div>
 
@@ -709,7 +729,8 @@ export default function VideoAnalyzer() {
                           <span key={i} style={{ color: p.color }}>P{i + 1}: {p.metrics.overallScore}/100</span>
                         ))}
                         {rec.videoTime !== 'Live' && <span>⏱ {rec.videoTime}</span>}
-                        {rec.savedAsRef && <span className="text-yellow-400">🔖 Saved</span>}
+                        {rec.pros && <span className="text-green-400">✓ Analysed</span>}
+                        {rec.savedAsRef && <span className="text-yellow-400">🔖</span>}
                       </div>
                     </div>
                     {expandedId === rec.id ? <ChevronUp size={16} className="text-slate-500 flex-shrink-0" /> : <ChevronDown size={16} className="text-slate-500 flex-shrink-0" />}
@@ -717,10 +738,30 @@ export default function VideoAnalyzer() {
 
                   {expandedId === rec.id && (
                     <div className="px-4 pb-4 space-y-4 border-t border-orion-border/40 pt-4">
-                      {/* Snapshot */}
+
+                      {/* Video Clip — shows ±3s around capture point */}
+                      {rec.videoSrc && rec.videoTimeSec !== undefined && (
+                        <div className="space-y-2">
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">📹 Highlighted Clip</p>
+                          <div className="relative rounded-xl overflow-hidden border border-orion-blue/30 bg-black">
+                            <video
+                              src={`${rec.videoSrc}#t=${Math.max(0, rec.videoTimeSec - 2)},${rec.videoTimeSec + 3}`}
+                              controls
+                              loop
+                              className="w-full"
+                              style={{ maxHeight: 220 }}
+                            />
+                            <div className="absolute top-2 left-2 bg-orion-blue/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              ⏱ {rec.videoTime} · clip ±3s
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Skeleton snapshot */}
                       {rec.snapshot && (
                         <div className="space-y-2">
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">Captured Footage</p>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">🦴 Skeleton Frame</p>
                           <img src={rec.snapshot} alt="frame" className="w-full rounded-xl border border-slate-700" />
                           <a href={rec.snapshot} download={`orion_${rec.timestamp.replace(/:/g, '-')}.jpg`}
                             className="flex items-center justify-center gap-2 py-2 rounded-xl border border-slate-700 text-slate-400 text-xs hover:text-white transition-all">
@@ -731,11 +772,11 @@ export default function VideoAnalyzer() {
 
                       {/* Pros / Cons */}
                       {loadingAnalysis === rec.id ? (
-                        <div className="flex items-center gap-2 text-orion-blue text-xs animate-pulse">
-                          <span className="animate-spin">⚙</span> ORION analysing pros & cons...
+                        <div className="flex items-center gap-2 text-orion-blue text-xs animate-pulse py-2">
+                          <span className="animate-spin">⚙</span> ORION analysing clip pros &amp; cons...
                         </div>
                       ) : rec.pros ? (
-                        <div className="grid grid-cols-1 gap-2">
+                        <div className="space-y-2">
                           <div className="rounded-xl bg-green-400/5 border border-green-400/20 p-3 space-y-1.5">
                             <p className="text-green-400 text-xs font-bold uppercase tracking-widest">✅ Pros</p>
                             {rec.pros.map((p, i) => <p key={i} className="text-slate-300 text-xs">• {p}</p>)}
@@ -750,26 +791,60 @@ export default function VideoAnalyzer() {
                               <p className="text-slate-300 text-xs">{rec.coachTip}</p>
                             </div>
                           )}
+                          {rec.tags && rec.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {rec.tags.map((t, i) => (
+                                <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400">{t}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : (
-                        <button onClick={() => analyseClipProscons(rec.id)}
+                        <button onClick={() => analyseClipProscons(rec)}
                           className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all">
-                          ⚡ Get Pros & Cons from ORION
+                          ⚡ Get Pros &amp; Cons from ORION
                         </button>
                       )}
 
-                      {/* Per-player metrics */}
+                      {/* Per-player metrics with /10 scores */}
                       {rec.players.map((p, pIdx) => (
-                        <div key={pIdx} className="rounded-xl border p-3 space-y-2" style={{ borderColor: `${p.color}30`, background: `${p.color}05` }}>
+                        <div key={pIdx} className="rounded-xl border p-3 space-y-3" style={{ borderColor: `${p.color}30`, background: `${p.color}05` }}>
                           <p className="text-xs font-bold" style={{ color: p.color }}>{p.label} — {p.technique}</p>
+
+                          {/* /10 scores */}
+                          <div className="space-y-2">
+                            <div>
+                              <div className="flex justify-between mb-0.5">
+                                <span className="text-[10px] text-slate-400">🌀 Stick Spin</span>
+                                <span className="text-[10px]" style={{ color: p.color }}>{p.spinScore}/10</span>
+                              </div>
+                              <ScoreBar score={p.spinScore} color={p.color} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between mb-0.5">
+                                <span className="text-[10px] text-slate-400">💥 Power</span>
+                                <span className="text-[10px]" style={{ color: p.color }}>{p.powerScore}/10</span>
+                              </div>
+                              <ScoreBar score={p.powerScore} color={p.color} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between mb-0.5">
+                                <span className="text-[10px] text-slate-400">⚡ Reflex</span>
+                                <span className="text-[10px]" style={{ color: p.color }}>{p.reflexScore}/10</span>
+                              </div>
+                              <ScoreBar score={p.reflexScore} color={p.color} />
+                            </div>
+                          </div>
+
+                          {/* Other metrics grid */}
                           <div className="grid grid-cols-3 gap-1.5">
                             {[
                               { l: 'Score', v: p.metrics.overallScore, u: '/100' },
                               { l: 'Balance', v: p.metrics.balance, u: '%' },
                               { l: 'Speed', v: p.attackSpeed, u: 'm/s' },
-                              { l: 'Power', v: p.power, u: '/100' },
                               { l: 'Height', v: p.estimatedHeight, u: 'cm' },
                               { l: 'Weight', v: p.estimatedWeight, u: 'kg' },
+                              { l: 'Knee', v: p.metrics.kneeBend, u: '°' },
                             ].map(({ l, v, u }) => (
                               <div key={l} className="bg-slate-800/60 rounded-lg p-2 text-center border border-slate-700/40">
                                 <p className="text-[10px] text-slate-500 mb-0.5">{l}</p>
@@ -822,7 +897,7 @@ export default function VideoAnalyzer() {
             </div>
           ) : (
             <>
-              <p className="text-xs text-slate-500">{refClips.length} reference clip{refClips.length > 1 ? 's' : ''} saved — ORION will suggest these for future videos</p>
+              <p className="text-xs text-slate-500">{refClips.length} reference clip{refClips.length > 1 ? 's' : ''} saved</p>
               {refClips.map(ref => (
                 <div key={ref.id} className="glass rounded-2xl border border-yellow-400/15 overflow-hidden">
                   <div className="flex gap-3 p-3.5">

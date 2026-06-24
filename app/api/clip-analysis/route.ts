@@ -14,19 +14,22 @@ Reply ONLY in this exact JSON format (no markdown, no extra text):
 }
 
 Rules:
-- pros: what the player(s) are doing well — be specific
-- cons: what needs improvement — be specific and actionable
+- pros: what the player(s) are doing well — be specific, mention spin/power/reflex if scores are high
+- cons: what needs improvement — be specific and actionable, mention if spin/reflex/power is low
 - coachTip: the single most important thing to fix or keep doing
 - tags: technique names, patterns, or keywords that describe this clip (for future matching)
 - Keep each point short — max 10 words
-- Always reply in easy simple English`
+- Always reply in easy simple English
+- Spin score 7+/10 = great spinning technique, mention it
+- Reflex score below 5/10 = tell them to react faster
+- Power score 8+/10 = strong strike power, mention it`
 
 export async function POST(req: NextRequest) {
   try {
     const { players, videoName, techniques } = await req.json()
 
     const playerSummary = (players as any[]).map((p: any, i: number) =>
-      `Player ${i + 1}: score=${p.overallScore}/100, balance=${p.balance}%, speed=${p.attackSpeed}m/s, power=${p.power}/100, knee=${p.kneeBend}°, technique=${p.technique}`
+      `Player ${i + 1}: score=${p.overallScore}/100, balance=${p.balance}%, speed=${p.attackSpeed}m/s, power=${p.powerScore}/10, spin=${p.spinScore}/10, reflex=${p.reflexScore}/10, knee=${p.kneeBend}°, technique=${p.technique}`
     ).join('\n')
 
     const msg = `Video: "${videoName}"
