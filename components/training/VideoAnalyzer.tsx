@@ -667,6 +667,8 @@ export default function VideoAnalyzer() {
                             <ScoreBar score={p.powerScore} color={p.color} />
                             <div className="flex justify-between text-[9px]"><span className="text-slate-400">Reflex</span></div>
                             <ScoreBar score={p.reflexScore} color={p.color} />
+                            <div className="flex justify-between text-[9px]"><span className="text-slate-400">Speed</span></div>
+                            <ScoreBar score={Math.min(10, Math.round(p.attackSpeed / 2.5))} color={p.color} />
                           </div>
                         </div>
                       ))}
@@ -833,6 +835,13 @@ export default function VideoAnalyzer() {
                                 <span className="text-[10px]" style={{ color: p.color }}>{p.reflexScore}/10</span>
                               </div>
                               <ScoreBar score={p.reflexScore} color={p.color} />
+                            </div>
+                            <div>
+                              <div className="flex justify-between mb-0.5">
+                                <span className="text-[10px] text-slate-400">🏃 Speed</span>
+                                <span className="text-[10px]" style={{ color: p.color }}>{Math.min(10, Math.round(p.attackSpeed / 2.5))}/10 ({p.attackSpeed}m/s)</span>
+                              </div>
+                              <ScoreBar score={Math.min(10, Math.round(p.attackSpeed / 2.5))} color={p.color} />
                             </div>
                           </div>
 
