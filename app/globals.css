@@ -10,12 +10,34 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  /* Prevent text size inflation on iOS rotation */
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   background-color: #050810;
   color: #e2e8f0;
   font-family: 'Inter', system-ui, sans-serif;
+  /* Prevent horizontal scroll on mobile */
+  overflow-x: hidden;
+}
+
+/* iOS safe area for bottom nav */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Ensure main content doesn't hide under bottom nav on iOS */
+main {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 1024px) {
+  main { padding-bottom: 0; }
 }
 
 .glass {
@@ -34,6 +56,12 @@ body {
 
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Better touch targets on mobile */
+@media (max-width: 1023px) {
+  button, a { min-height: 44px; }
+  input, textarea, select { font-size: 16px !important; } /* Prevents iOS zoom on focus */
+}
 
 @keyframes orb-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }

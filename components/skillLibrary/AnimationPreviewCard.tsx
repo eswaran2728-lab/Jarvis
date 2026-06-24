@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { SkillClip, PoseKeyframe } from '@/types/skillLibrary'
 
-type Props = { clip: SkillClip; width?: number; height?: number; autoPlay?: boolean }
+type Props = { clip: SkillClip; width?: number; height?: number; autoPlay?: boolean; responsive?: boolean }
 
 const PHASE_COLORS: Record<string, string> = {
   ready: '#4ade80', attack: '#f97316', impact: '#ef4444',
@@ -202,7 +202,8 @@ function drawImpactFlash(ctx: CanvasRenderingContext2D, x: number, y: number, r:
   ctx.restore()
 }
 
-export default function AnimationPreviewCard({ clip, width = 320, height = 200, autoPlay = true }: Props) {
+export default function AnimationPreviewCard({ clip, width = 320, height = 200, autoPlay = true, responsive = false }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [frameIdx, setFrameIdx] = useState(0)
   const [playing, setPlaying] = useState(autoPlay)
@@ -352,9 +353,9 @@ export default function AnimationPreviewCard({ clip, width = 320, height = 200, 
   const phase = frames[frameIdx]?.phase || 'ready'
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" ref={containerRef}>
       <div className="relative rounded-xl overflow-hidden border border-slate-700/50" style={{ background: '#0f0f1a' }}>
-        <canvas ref={canvasRef} width={width} height={height} className="w-full" />
+        <canvas ref={canvasRef} width={width} height={height} className="w-full" style={{ aspectRatio: `${width}/${height}` }} />
         {/* Frame dots */}
         {totalFrames > 1 && (
           <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
