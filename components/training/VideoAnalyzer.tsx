@@ -19,6 +19,14 @@ import {
   detectUsiOpportunity, analyzeUsiAttempt, drawUsiOverlay, estimateUsiStickTip,
   UsiOpportunity, UsiAttemptResult, UsiPoint,
 } from '@/lib/pose/usiDetection'
+import {
+  detectSweepOpportunity, analyzeSweepAttempt, drawSweepOverlay, estimateSweepStickTip,
+  SweepOpportunity, SweepAttemptResult, SweepPoint,
+} from '@/lib/pose/sweepDetection'
+import {
+  analyzeBavalaiState, drawBavalaiOverlay, getBavalaiWristAngle,
+  BavalaiState, BavalaiPoint,
+} from '@/lib/pose/bavalaiDetection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +70,10 @@ type AnalysisRecord = {
   usiOpportunity?: UsiOpportunity
   usiAttempt?: UsiAttemptResult
   usiDeepAnalysis?: any
+  sweepOpportunity?: SweepOpportunity
+  sweepAttempt?: SweepAttemptResult
+  sweepDeepAnalysis?: any
+  bavalaiState?: BavalaiState
 }
 
 type HighlightCategory = 'strike' | 'defense' | 'counter' | 'acha'
@@ -433,12 +445,15 @@ export default function VideoAnalyzer() {
   const [counterClips, setCounterClips] = useState<HighlightClip[]>([])
   const [cuttingClip, setCuttingClip] = useState<{ id: number; category: HighlightCategory } | null>(null)
   const [savedFlash, setSavedFlash]   = useState<string | null>(null)
-  const [liveUStrike, setLiveUStrike] = useState<UStrikeOpportunity | null>(null)
-  const [liveHook, setLiveHook]       = useState<HookOpportunity | null>(null)
-  const [liveUsi, setLiveUsi]         = useState<UsiOpportunity | null>(null)
+  const [liveUStrike, setLiveUStrike]   = useState<UStrikeOpportunity | null>(null)
+  const [liveHook, setLiveHook]         = useState<HookOpportunity | null>(null)
+  const [liveUsi, setLiveUsi]           = useState<UsiOpportunity | null>(null)
+  const [liveSweep, setLiveSweep]       = useState<SweepOpportunity | null>(null)
+  const [liveBavalai, setLiveBavalai]   = useState<BavalaiState | null>(null)
   const [loadingUStrike, setLoadingUStrike] = useState<number | null>(null)
-  const [loadingHook, setLoadingHook] = useState<number | null>(null)
-  const [loadingUsi, setLoadingUsi]   = useState<number | null>(null)
+  const [loadingHook, setLoadingHook]   = useState<number | null>(null)
+  const [loadingUsi, setLoadingUsi]     = useState<number | null>(null)
+  const [loadingSweep, setLoadingSweep] = useState<number | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -464,6 +479,8 @@ export default function VideoAnalyzer() {
   const tipHistoryRef    = useRef<TipPoint[][]>([[], [], [], []])
   const hookHistoryRef   = useRef<HookPoint[][]>([[], [], [], []])
   const usiHistoryRef    = useRef<UsiPoint[][]>([[], [], [], []])
+  const sweepHistoryRef  = useRef<SweepPoint[][]>([[], [], [], []])
+  const bavalaiHistoryRef = useRef<BavalaiPoint[][]>([[], [], [], []])
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -688,6 +705,25 @@ export default function VideoAnalyzer() {
     setLoadingUsi(null)
   }, [])
 
+  const getSweepDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.sweepOpportunity) return
+    setLoadingSweep(rec.id)
+    try {
+      const res = await fetch('/api/sweep-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunity: rec.sweepOpportunity,
+          attempt: rec.sweepAttempt || null,
+          fighter: rec.players[0]?.label || 'Player 1',
+          videoTime: rec.videoTime,
+        }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, sweepDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingSweep(null)
+  }, [])
+
   // ─── Clip cutting ──────────────────────────────────────────────────────────
 
   const cutAndSaveHighlight = useCallback(async (rec: AnalysisRecord, category: HighlightCategory) => {
@@ -829,19 +865,41 @@ export default function VideoAnalyzer() {
         const iTip = estimateUsiStickTip(attackerLm)
         if (iTip) usiHistoryRef.current[0] = [...usiHistoryRef.current[0].slice(-29), { ...iTip, ts: now }]
 
-        // Draw overlays on canvas (U Strike, Hook, Usi)
+        // Sweep detection
+        const bavalaiActive = (bavalaiHistoryRef.current[0].length >= 8)
+        const sweepOpp = detectSweepOpportunity(attackerLm, defenderLm, bavalaiActive)
+        setLiveSweep(sweepOpp)
+        const sTip = estimateSweepStickTip(attackerLm)
+        if (sTip) sweepHistoryRef.current[0] = [...sweepHistoryRef.current[0].slice(-29), { ...sTip, ts: now }]
+
+        // Bavalai detection
+        const bAngle = getBavalaiWristAngle(attackerLm)
+        if (bAngle !== null) {
+          const domW = (attackerLm[16]?.visibility || 0) > (attackerLm[15]?.visibility || 0) ? attackerLm[16] : attackerLm[15]
+          bavalaiHistoryRef.current[0] = [
+            ...bavalaiHistoryRef.current[0].slice(-39),
+            { x: domW?.x || 0.5, y: domW?.y || 0.5, ts: now, angle: bAngle },
+          ]
+        }
+        const bavalaiSt = analyzeBavalaiState(attackerLm, defenderLm, bavalaiHistoryRef.current[0])
+        setLiveBavalai(bavalaiSt)
+
+        // Draw overlays on canvas (U Strike, Hook, Usi, Sweep, Bavalai)
         const ctx = canvas.getContext('2d')
         if (ctx) {
           const W = canvas.width; const H = canvas.height
           drawUStrikeOverlay(ctx, W, H, attackerLm, defenderLm, uStrikeOpp, tipHistoryRef.current[0])
           drawHookOverlay(ctx, W, H, attackerLm, defenderLm, hookOpp, hookHistoryRef.current[0])
           drawUsiOverlay(ctx, W, H, attackerLm, defenderLm, usiOpp, usiHistoryRef.current[0])
+          drawSweepOverlay(ctx, W, H, attackerLm, defenderLm, sweepOpp, sweepHistoryRef.current[0])
+          drawBavalaiOverlay(ctx, W, H, attackerLm, bavalaiSt, bavalaiHistoryRef.current[0])
         }
 
         // Attempt analyses
         const uStrikeAttempt = analyzeUStrikeAttempt(attackerLm, defenderLm, tipHistoryRef.current[0], uStrikeOpp)
         const hookAttempt    = analyzeHookAttempt(attackerLm, defenderLm, hookHistoryRef.current[0], hookOpp)
         const usiAttempt     = analyzeUsiAttempt(attackerLm, defenderLm, usiHistoryRef.current[0], usiOpp)
+        const sweepAttempt   = analyzeSweepAttempt(attackerLm, defenderLm, sweepHistoryRef.current[0], sweepOpp)
 
         const snapshot = captureSnapshot(video, canvas)
         const timeSec = video.currentTime
@@ -853,6 +911,9 @@ export default function VideoAnalyzer() {
           hookAttempt: hookAttempt.detected ? hookAttempt : undefined,
           usiOpportunity: usiOpp,
           usiAttempt: usiAttempt.detected ? usiAttempt : undefined,
+          sweepOpportunity: sweepOpp,
+          sweepAttempt: sweepAttempt.detected ? sweepAttempt : undefined,
+          bavalaiState: bavalaiSt.detected ? bavalaiSt : undefined,
         }
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
@@ -959,12 +1020,32 @@ export default function VideoAnalyzer() {
           const iTipCam = estimateUsiStickTip(camAtk)
           if (iTipCam) usiHistoryRef.current[0] = [...usiHistoryRef.current[0].slice(-29), { ...iTipCam, ts: camNow }]
 
+          // Sweep + Bavalai for camera
+          const camBavalaiActive = bavalaiHistoryRef.current[0].length >= 8
+          const camSweepOpp = detectSweepOpportunity(camAtk, camDef, camBavalaiActive)
+          setLiveSweep(camSweepOpp)
+          const sTipCam = estimateSweepStickTip(camAtk)
+          if (sTipCam) sweepHistoryRef.current[0] = [...sweepHistoryRef.current[0].slice(-29), { ...sTipCam, ts: camNow }]
+
+          const camBAngle = getBavalaiWristAngle(camAtk)
+          if (camBAngle !== null) {
+            const domW = (camAtk[16]?.visibility || 0) > (camAtk[15]?.visibility || 0) ? camAtk[16] : camAtk[15]
+            bavalaiHistoryRef.current[0] = [
+              ...bavalaiHistoryRef.current[0].slice(-39),
+              { x: domW?.x || 0.5, y: domW?.y || 0.5, ts: camNow, angle: camBAngle },
+            ]
+          }
+          const camBavalaiSt = analyzeBavalaiState(camAtk, camDef, bavalaiHistoryRef.current[0])
+          setLiveBavalai(camBavalaiSt)
+
           const ctx = canvas.getContext('2d')
           if (ctx) {
             const cW = canvas.width; const cH = canvas.height
             drawUStrikeOverlay(ctx, cW, cH, camAtk, camDef, camUStrikeOpp, tipHistoryRef.current[0])
             drawHookOverlay(ctx, cW, cH, camAtk, camDef, camHookOpp, hookHistoryRef.current[0])
             drawUsiOverlay(ctx, cW, cH, camAtk, camDef, camUsiOpp, usiHistoryRef.current[0])
+            drawSweepOverlay(ctx, cW, cH, camAtk, camDef, camSweepOpp, sweepHistoryRef.current[0])
+            drawBavalaiOverlay(ctx, cW, cH, camAtk, camBavalaiSt, bavalaiHistoryRef.current[0])
           }
         }
       }, 300)
@@ -1274,6 +1355,72 @@ export default function VideoAnalyzer() {
                         Counter risk: <span className="font-bold" style={{
                           color: liveUsi.counterRisk === 'LOW' ? '#00ff88' : liveUsi.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
                         }}>{liveUsi.counterRisk}</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Bavalai opportunity engine banner */}
+                  {liveBavalai?.detected && (
+                    <div className="rounded-2xl border p-3 space-y-2" style={{
+                      background: `${liveBavalai.overlayColor}08`,
+                      borderColor: `${liveBavalai.overlayColor}40`,
+                    }}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="w-2 h-2 rounded-full animate-spin" style={{ background: liveBavalai.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveBavalai.overlayColor }}>
+                          ⟳ Bavalai — {liveBavalai.quality}
+                        </p>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full ml-auto" style={{ background: `${liveBavalai.overlayColor}20`, color: liveBavalai.overlayColor }}>
+                          {liveBavalai.rotationSpeed} · {liveBavalai.compactness}
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveBavalai.coachMessage}</p>
+                      {liveBavalai.bestOpportunity && (
+                        <div className="rounded-xl p-2 space-y-1" style={{ background: `${liveBavalai.bestOpportunity.color}15`, border: `1px solid ${liveBavalai.bestOpportunity.color}40` }}>
+                          <p className="text-xs font-bold" style={{ color: liveBavalai.bestOpportunity.color }}>
+                            ⚡ {liveBavalai.bestOpportunity.technique} — Attack Now
+                          </p>
+                          <p className="text-slate-300 text-[10px]">{liveBavalai.bestOpportunity.reason}</p>
+                        </div>
+                      )}
+                      {liveBavalai.opportunities.filter(o => o.available).length > 1 && (
+                        <div className="flex flex-wrap gap-1">
+                          {liveBavalai.opportunities.filter(o => o.available).map(o => (
+                            <span key={o.technique} className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                              style={{ background: `${o.color}20`, color: o.color }}>
+                              {o.technique}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Sweep live suggestion banner */}
+                  {liveSweep && liveSweep.available && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
+                      background: `${liveSweep.overlayColor}10`,
+                      borderColor: `${liveSweep.overlayColor}50`,
+                    }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveSweep.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveSweep.overlayColor }}>
+                          🟢 Sweep Opportunity!
+                        </p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                          style={{ background: `${liveSweep.overlayColor}20`, color: liveSweep.overlayColor }}>
+                          {liveSweep.openTarget}
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{liveSweep.suggestion}</p>
+                      {liveSweep.handsTogetherWarning && (
+                        <p className="text-yellow-400 text-[10px]">✋ Bring both hands together before striking.</p>
+                      )}
+                      {liveSweep.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveSweep.warning}</p>}
+                      <p className="text-slate-500 text-[10px]">
+                        Counter risk: <span className="font-bold" style={{
+                          color: liveSweep.counterRisk === 'LOW' ? '#00ff88' : liveSweep.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                        }}>{liveSweep.counterRisk}</span>
                       </p>
                     </div>
                   )}
@@ -1817,6 +1964,159 @@ export default function VideoAnalyzer() {
                               disabled={loadingUsi === rec.id}
                               className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
                               {loadingUsi === rec.id ? '⚙ ORION analysing Usi...' : '💉 Get Usi Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Bavalai State */}
+                      {rec.bavalaiState?.detected && (
+                        <div className="rounded-xl border p-3 space-y-2" style={{
+                          borderColor: `${rec.bavalaiState.overlayColor}40`,
+                          background: `${rec.bavalaiState.overlayColor}08`,
+                        }}>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-bold" style={{ color: rec.bavalaiState.overlayColor }}>
+                              ⟳ Bavalai Analysis
+                            </p>
+                            <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                              style={{ background: `${rec.bavalaiState.overlayColor}20`, color: rec.bavalaiState.overlayColor }}>
+                              {rec.bavalaiState.quality}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5 text-[10px]">
+                            {[
+                              { l: 'Rotations', v: rec.bavalaiState.rotationCount },
+                              { l: 'Speed',     v: rec.bavalaiState.rotationSpeed },
+                              { l: 'Rhythm',    v: `${rec.bavalaiState.rhythmScore}/100` },
+                            ].map(({ l, v }) => (
+                              <div key={l} className="bg-slate-900/60 rounded-lg p-2 text-center">
+                                <p className="text-slate-500 mb-0.5">{l}</p>
+                                <p className="text-white font-bold text-xs">{v}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-slate-300 text-xs">{rec.bavalaiState.coachMessage}</p>
+                          {rec.bavalaiState.opportunities.filter(o => o.available).length > 0 && (
+                            <div>
+                              <p className="text-[10px] text-slate-500 mb-1">Opportunities detected from Bavalai:</p>
+                              <div className="flex flex-wrap gap-1">
+                                {rec.bavalaiState.opportunities.filter(o => o.available).map(o => (
+                                  <span key={o.technique} className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                                    style={{ background: `${o.color}20`, color: o.color }}>
+                                    {o.technique}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Sweep Analysis */}
+                      {rec.sweepOpportunity && rec.sweepOpportunity.openTarget !== 'None' && (
+                        <div className="space-y-2">
+                          <div className="rounded-xl border p-3 space-y-2" style={{
+                            borderColor: `${rec.sweepOpportunity.overlayColor}40`,
+                            background: `${rec.sweepOpportunity.overlayColor}08`,
+                          }}>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-bold" style={{ color: rec.sweepOpportunity.overlayColor }}>
+                                🟢 Sweep Detection
+                              </p>
+                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                                style={{ background: `${rec.sweepOpportunity.overlayColor}20`, color: rec.sweepOpportunity.overlayColor }}>
+                                {rec.sweepOpportunity.openTarget}
+                              </span>
+                            </div>
+                            <p className="text-slate-300 text-xs">{rec.sweepOpportunity.reason}</p>
+                            <div className="flex flex-wrap gap-2 text-[10px]">
+                              <span className="text-slate-500">Guard High: <span className={rec.sweepOpportunity.guardHigh ? 'text-green-400' : 'text-slate-400'}>{rec.sweepOpportunity.guardHigh ? 'Yes ✓' : 'No'}</span></span>
+                              <span className="text-slate-500">Bavalai: <span className={rec.sweepOpportunity.fromBavalai ? 'text-green-400' : 'text-slate-400'}>{rec.sweepOpportunity.fromBavalai ? 'Yes ✓' : 'Not detected'}</span></span>
+                            </div>
+                            {rec.sweepOpportunity.handsTogetherWarning && (
+                              <p className="text-yellow-400 text-[10px]">✋ Both hands must come together during strike.</p>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-slate-500">Counter risk:</span>
+                              <span className="font-bold" style={{
+                                color: rec.sweepOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.sweepOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                              }}>{rec.sweepOpportunity.counterRisk}</span>
+                            </div>
+                          </div>
+
+                          {rec.sweepAttempt && (
+                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
+                              <p className="text-xs font-bold text-slate-300">🟢 Sweep Attempt</p>
+                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">Target</p>
+                                  <p className="text-white font-bold">{rec.sweepAttempt.target}</p>
+                                  <p style={{ color: rec.sweepAttempt.touchResult === 'Clean Touch' ? '#00ff88' : rec.sweepAttempt.touchResult === 'Invalid Foot Contact' ? '#f97316' : '#f59e0b' }}>
+                                    {rec.sweepAttempt.touchResult}
+                                  </p>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">Hands Together</p>
+                                  <p className={`font-bold ${rec.sweepAttempt.handsTogether ? 'text-green-400' : 'text-red-400'}`}>
+                                    {rec.sweepAttempt.handsTogether ? '✓ Yes' : '✗ No'}
+                                  </p>
+                                  <p className="text-slate-400">{rec.sweepAttempt.speedRating}</p>
+                                </div>
+                              </div>
+                              <p className="text-slate-400 text-[10px]">Path: {rec.sweepAttempt.stickPath} · Recovery: {rec.sweepAttempt.recovery}</p>
+                              <div className="text-center py-1">
+                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
+                                  background: rec.sweepAttempt.finalResult === 'Successful Sweep' ? '#00ff8820' : rec.sweepAttempt.finalResult === 'Invalid Sweep' ? '#f9731620' : rec.sweepAttempt.finalResult === 'Partial Sweep' ? '#f59e0b20' : '#f9731620',
+                                  color: rec.sweepAttempt.finalResult === 'Successful Sweep' ? '#00ff88' : rec.sweepAttempt.finalResult === 'Invalid Sweep' ? '#f97316' : rec.sweepAttempt.finalResult === 'Partial Sweep' ? '#f59e0b' : '#f97316',
+                                }}>{rec.sweepAttempt.finalResult}</span>
+                              </div>
+                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.sweepAttempt.coachingFeedback}</p>
+                            </div>
+                          )}
+
+                          {rec.sweepDeepAnalysis ? (
+                            <div className="rounded-xl border border-green-400/20 bg-green-400/5 p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-green-400">🤖 Sweep Deep Analysis</p>
+                                {rec.sweepDeepAnalysis.overallScore > 0 && (
+                                  <span className="ml-auto text-xs font-bold text-green-400">{rec.sweepDeepAnalysis.overallScore}/100</span>
+                                )}
+                              </div>
+                              {rec.sweepDeepAnalysis.technicalBreakdown && (
+                                <p className="text-slate-300 text-xs">{rec.sweepDeepAnalysis.technicalBreakdown}</p>
+                              )}
+                              {rec.sweepDeepAnalysis.keyStrengths?.length > 0 && (
+                                <div>
+                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
+                                  {rec.sweepDeepAnalysis.keyStrengths.map((s: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.sweepDeepAnalysis.criticalFixes?.length > 0 && (
+                                <div>
+                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
+                                  {rec.sweepDeepAnalysis.criticalFixes.map((f: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.sweepDeepAnalysis.improvementDrills?.length > 0 && (
+                                <div>
+                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
+                                  {rec.sweepDeepAnalysis.improvementDrills.map((d: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => getSweepDeepAnalysis(rec)}
+                              disabled={loadingSweep === rec.id}
+                              className="w-full py-2.5 rounded-xl border border-green-400/30 text-green-400 text-xs font-bold hover:bg-green-400/10 transition-all disabled:opacity-50">
+                              {loadingSweep === rec.id ? '⚙ ORION analysing Sweep...' : '🟢 Get Sweep Deep Analysis'}
                             </button>
                           )}
                         </div>
