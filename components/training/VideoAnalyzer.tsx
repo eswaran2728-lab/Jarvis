@@ -9,8 +9,16 @@ import { getSuggestedClips } from '@/lib/skillLibrary/store'
 import { ReferenceClip } from '@/types/skillLibrary'
 import {
   detectUStrikeOpportunity, analyzeUStrikeAttempt, drawUStrikeOverlay, estimateStickTip,
-  UStrikeOpportunity, UStrikeAttemptResult, UStrikeTimestamp, TipPoint,
+  UStrikeOpportunity, UStrikeAttemptResult, TipPoint,
 } from '@/lib/pose/uStrikeDetection'
+import {
+  detectHookOpportunity, analyzeHookAttempt, drawHookOverlay, estimateHookStickTip,
+  HookOpportunity, HookAttemptResult, HookPoint,
+} from '@/lib/pose/hookDetection'
+import {
+  detectUsiOpportunity, analyzeUsiAttempt, drawUsiOverlay, estimateUsiStickTip,
+  UsiOpportunity, UsiAttemptResult, UsiPoint,
+} from '@/lib/pose/usiDetection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,6 +56,12 @@ type AnalysisRecord = {
   uStrikeOpportunity?: UStrikeOpportunity
   uStrikeAttempt?: UStrikeAttemptResult
   uStrikeDeepAnalysis?: any
+  hookOpportunity?: HookOpportunity
+  hookAttempt?: HookAttemptResult
+  hookDeepAnalysis?: any
+  usiOpportunity?: UsiOpportunity
+  usiAttempt?: UsiAttemptResult
+  usiDeepAnalysis?: any
 }
 
 type HighlightCategory = 'strike' | 'defense' | 'counter' | 'acha'
@@ -420,7 +434,11 @@ export default function VideoAnalyzer() {
   const [cuttingClip, setCuttingClip] = useState<{ id: number; category: HighlightCategory } | null>(null)
   const [savedFlash, setSavedFlash]   = useState<string | null>(null)
   const [liveUStrike, setLiveUStrike] = useState<UStrikeOpportunity | null>(null)
+  const [liveHook, setLiveHook]       = useState<HookOpportunity | null>(null)
+  const [liveUsi, setLiveUsi]         = useState<UsiOpportunity | null>(null)
   const [loadingUStrike, setLoadingUStrike] = useState<number | null>(null)
+  const [loadingHook, setLoadingHook] = useState<number | null>(null)
+  const [loadingUsi, setLoadingUsi]   = useState<number | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -444,6 +462,8 @@ export default function VideoAnalyzer() {
   const videoNameRef     = useRef<string>('')
   const recordsRef       = useRef<AnalysisRecord[]>([])
   const tipHistoryRef    = useRef<TipPoint[][]>([[], [], [], []])
+  const hookHistoryRef   = useRef<HookPoint[][]>([[], [], [], []])
+  const usiHistoryRef    = useRef<UsiPoint[][]>([[], [], [], []])
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -630,6 +650,44 @@ export default function VideoAnalyzer() {
     setLoadingUStrike(null)
   }, [])
 
+  const getHookDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.hookOpportunity) return
+    setLoadingHook(rec.id)
+    try {
+      const res = await fetch('/api/hook-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunity: rec.hookOpportunity,
+          attempt: rec.hookAttempt || null,
+          fighter: rec.players[0]?.label || 'Player 1',
+          videoTime: rec.videoTime,
+        }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, hookDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingHook(null)
+  }, [])
+
+  const getUsiDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.usiOpportunity) return
+    setLoadingUsi(rec.id)
+    try {
+      const res = await fetch('/api/usi-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunity: rec.usiOpportunity,
+          attempt: rec.usiAttempt || null,
+          fighter: rec.players[0]?.label || 'Player 1',
+          videoTime: rec.videoTime,
+        }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, usiDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingUsi(null)
+  }, [])
+
   // ─── Clip cutting ──────────────────────────────────────────────────────────
 
   const cutAndSaveHighlight = useCallback(async (rec: AnalysisRecord, category: HighlightCategory) => {
@@ -749,37 +807,52 @@ export default function VideoAnalyzer() {
       if (allLandmarks.length > 0) {
         drawAllPlayers(allLandmarks, canvas, video)
 
-        // U Strike opportunity detection
         const attackerLm = allLandmarks[0]
         const defenderLm = allLandmarks[1] || null
-        const opportunity = detectUStrikeOpportunity(attackerLm, defenderLm)
-        setLiveUStrike(opportunity)
+        const now = performance.now()
 
-        // Update tip history for attacker (player 0)
-        const tip = estimateStickTip(attackerLm)
-        if (tip) {
-          tipHistoryRef.current[0] = [
-            ...tipHistoryRef.current[0].slice(-29),
-            { x: tip.x, y: tip.y, ts: performance.now() },
-          ]
-        }
+        // U Strike detection
+        const uStrikeOpp = detectUStrikeOpportunity(attackerLm, defenderLm)
+        setLiveUStrike(uStrikeOpp)
+        const uTip = estimateStickTip(attackerLm)
+        if (uTip) tipHistoryRef.current[0] = [...tipHistoryRef.current[0].slice(-29), { ...uTip, ts: now }]
 
-        // Draw U Strike overlay on top of skeleton
+        // Hook detection
+        const hookOpp = detectHookOpportunity(attackerLm, defenderLm)
+        setLiveHook(hookOpp)
+        const hTip = estimateHookStickTip(attackerLm)
+        if (hTip) hookHistoryRef.current[0] = [...hookHistoryRef.current[0].slice(-29), { ...hTip, ts: now }]
+
+        // Usi detection
+        const usiOpp = detectUsiOpportunity(attackerLm, defenderLm)
+        setLiveUsi(usiOpp)
+        const iTip = estimateUsiStickTip(attackerLm)
+        if (iTip) usiHistoryRef.current[0] = [...usiHistoryRef.current[0].slice(-29), { ...iTip, ts: now }]
+
+        // Draw overlays on canvas (U Strike, Hook, Usi)
         const ctx = canvas.getContext('2d')
         if (ctx) {
           const W = canvas.width; const H = canvas.height
-          drawUStrikeOverlay(ctx, W, H, attackerLm, defenderLm, opportunity, tipHistoryRef.current[0])
+          drawUStrikeOverlay(ctx, W, H, attackerLm, defenderLm, uStrikeOpp, tipHistoryRef.current[0])
+          drawHookOverlay(ctx, W, H, attackerLm, defenderLm, hookOpp, hookHistoryRef.current[0])
+          drawUsiOverlay(ctx, W, H, attackerLm, defenderLm, usiOpp, usiHistoryRef.current[0])
         }
 
-        // Attempt analysis
-        const attempt = analyzeUStrikeAttempt(attackerLm, defenderLm, tipHistoryRef.current[0], opportunity)
+        // Attempt analyses
+        const uStrikeAttempt = analyzeUStrikeAttempt(attackerLm, defenderLm, tipHistoryRef.current[0], uStrikeOpp)
+        const hookAttempt    = analyzeHookAttempt(attackerLm, defenderLm, hookHistoryRef.current[0], hookOpp)
+        const usiAttempt     = analyzeUsiAttempt(attackerLm, defenderLm, usiHistoryRef.current[0], usiOpp)
 
         const snapshot = captureSnapshot(video, canvas)
         const timeSec = video.currentTime
         const rec: AnalysisRecord = {
           ...buildRecord(allLandmarks, formatTime(timeSec), snapshot, timeSec),
-          uStrikeOpportunity: opportunity,
-          uStrikeAttempt: attempt.detected ? attempt : undefined,
+          uStrikeOpportunity: uStrikeOpp,
+          uStrikeAttempt: uStrikeAttempt.detected ? uStrikeAttempt : undefined,
+          hookOpportunity: hookOpp,
+          hookAttempt: hookAttempt.detected ? hookAttempt : undefined,
+          usiOpportunity: usiOpp,
+          usiAttempt: usiAttempt.detected ? usiAttempt : undefined,
         }
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
@@ -866,21 +939,32 @@ export default function VideoAnalyzer() {
           prevLandmarksRef.current = allLandmarks; prevTimestampRef.current = performance.now()
           setLivePlayers(players)
 
-          // Live U Strike opportunity for camera mode
-          const attackerLm = allLandmarks[0]
-          const defenderLm = allLandmarks[1] || null
-          const opportunity = detectUStrikeOpportunity(attackerLm, defenderLm)
-          setLiveUStrike(opportunity)
-          const tip = estimateStickTip(attackerLm)
-          if (tip) {
-            tipHistoryRef.current[0] = [
-              ...tipHistoryRef.current[0].slice(-29),
-              { x: tip.x, y: tip.y, ts: performance.now() },
-            ]
-          }
+          // Live technique detection for camera mode
+          const camAtk = allLandmarks[0]
+          const camDef = allLandmarks[1] || null
+          const camNow = performance.now()
+
+          const camUStrikeOpp = detectUStrikeOpportunity(camAtk, camDef)
+          setLiveUStrike(camUStrikeOpp)
+          const uTipCam = estimateStickTip(camAtk)
+          if (uTipCam) tipHistoryRef.current[0] = [...tipHistoryRef.current[0].slice(-29), { ...uTipCam, ts: camNow }]
+
+          const camHookOpp = detectHookOpportunity(camAtk, camDef)
+          setLiveHook(camHookOpp)
+          const hTipCam = estimateHookStickTip(camAtk)
+          if (hTipCam) hookHistoryRef.current[0] = [...hookHistoryRef.current[0].slice(-29), { ...hTipCam, ts: camNow }]
+
+          const camUsiOpp = detectUsiOpportunity(camAtk, camDef)
+          setLiveUsi(camUsiOpp)
+          const iTipCam = estimateUsiStickTip(camAtk)
+          if (iTipCam) usiHistoryRef.current[0] = [...usiHistoryRef.current[0].slice(-29), { ...iTipCam, ts: camNow }]
+
           const ctx = canvas.getContext('2d')
           if (ctx) {
-            drawUStrikeOverlay(ctx, canvas.width, canvas.height, attackerLm, defenderLm, opportunity, tipHistoryRef.current[0])
+            const cW = canvas.width; const cH = canvas.height
+            drawUStrikeOverlay(ctx, cW, cH, camAtk, camDef, camUStrikeOpp, tipHistoryRef.current[0])
+            drawHookOverlay(ctx, cW, cH, camAtk, camDef, camHookOpp, hookHistoryRef.current[0])
+            drawUsiOverlay(ctx, cW, cH, camAtk, camDef, camUsiOpp, usiHistoryRef.current[0])
           }
         }
       }, 300)
@@ -1129,6 +1213,67 @@ export default function VideoAnalyzer() {
                         Counter risk: <span className="font-bold" style={{
                           color: liveUStrike.counterRisk === 'LOW' ? '#00ff88' : liveUStrike.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
                         }}>{liveUStrike.counterRisk}</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Hook live suggestion banner */}
+                  {liveHook && liveHook.type !== 'NONE' && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
+                      background: `${liveHook.overlayColor}10`,
+                      borderColor: `${liveHook.overlayColor}50`,
+                    }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveHook.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveHook.overlayColor }}>
+                          {liveHook.available ? '🔵 Hook Opening!' : '⚠️ Hook Risk'}
+                        </p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                          style={{ background: `${liveHook.overlayColor}20`, color: liveHook.overlayColor }}>
+                          {liveHook.type.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{liveHook.suggestion}</p>
+                      {liveHook.openTargets.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {liveHook.openTargets.map(t => (
+                            <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
+                          ))}
+                        </div>
+                      )}
+                      {liveHook.pathTooWide && (
+                        <p className="text-yellow-400 text-[10px]">⚠ Hook path is too wide. Shorten the movement.</p>
+                      )}
+                      {liveHook.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveHook.warning}</p>}
+                      <p className="text-slate-500 text-[10px]">
+                        Counter risk: <span className="font-bold" style={{
+                          color: liveHook.counterRisk === 'LOW' ? '#00ff88' : liveHook.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                        }}>{liveHook.counterRisk}</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Usi live suggestion banner */}
+                  {liveUsi && liveUsi.available && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
+                      background: `${liveUsi.overlayColor}10`,
+                      borderColor: `${liveUsi.overlayColor}50`,
+                    }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveUsi.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveUsi.overlayColor }}>
+                          💉 Usi Opportunity!
+                        </p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-400/20 text-orion-blue">
+                          Chest Open
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{liveUsi.suggestion}</p>
+                      {liveUsi.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveUsi.warning}</p>}
+                      <p className="text-slate-500 text-[10px]">
+                        Counter risk: <span className="font-bold" style={{
+                          color: liveUsi.counterRisk === 'LOW' ? '#00ff88' : liveUsi.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                        }}>{liveUsi.counterRisk}</span>
                       </p>
                     </div>
                   )}
@@ -1449,6 +1594,229 @@ export default function VideoAnalyzer() {
                               disabled={loadingUStrike === rec.id}
                               className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
                               {loadingUStrike === rec.id ? '⚙ ORION analysing U Strike...' : '🌀 Get U Strike Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Hook Analysis */}
+                      {rec.hookOpportunity && rec.hookOpportunity.type !== 'NONE' && (
+                        <div className="space-y-2">
+                          <div className="rounded-xl border p-3 space-y-2" style={{
+                            borderColor: `${rec.hookOpportunity.overlayColor}40`,
+                            background: `${rec.hookOpportunity.overlayColor}08`,
+                          }}>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-bold" style={{ color: rec.hookOpportunity.overlayColor }}>
+                                🔵 Hook Detection
+                              </p>
+                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                                style={{ background: `${rec.hookOpportunity.overlayColor}20`, color: rec.hookOpportunity.overlayColor }}>
+                                {rec.hookOpportunity.type.replace('_', ' ')}
+                              </span>
+                            </div>
+                            <p className="text-slate-300 text-xs">{rec.hookOpportunity.reason}</p>
+                            {rec.hookOpportunity.openTargets.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                <span className="text-[10px] text-slate-500">Open targets:</span>
+                                {rec.hookOpportunity.openTargets.map(t => (
+                                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
+                                ))}
+                              </div>
+                            )}
+                            {rec.hookOpportunity.pathTooWide && (
+                              <p className="text-yellow-400 text-[10px]">⚠ Hook path was too wide. Shorten the C-movement.</p>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-slate-500">Counter risk:</span>
+                              <span className="font-bold" style={{
+                                color: rec.hookOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.hookOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                              }}>{rec.hookOpportunity.counterRisk}</span>
+                            </div>
+                          </div>
+
+                          {rec.hookAttempt && (
+                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
+                              <p className="text-xs font-bold text-slate-300">🔵 Hook Attempt</p>
+                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">1st Touch</p>
+                                  <p className="text-white font-bold">{rec.hookAttempt.firstTouchTarget}</p>
+                                  <p style={{ color: rec.hookAttempt.firstTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
+                                    {rec.hookAttempt.firstTouchResult}
+                                  </p>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">2nd Touch</p>
+                                  <p className="text-white font-bold">{rec.hookAttempt.secondTouchTarget}</p>
+                                  <p style={{ color: rec.hookAttempt.secondTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
+                                    {rec.hookAttempt.secondTouchResult}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-slate-500">Path: <span className="text-white">{rec.hookAttempt.pathCompactness}</span></span>
+                                <span className="text-slate-500">Flow: <span className={rec.hookAttempt.continuousFlow ? 'text-green-400' : 'text-red-400'}>{rec.hookAttempt.continuousFlow ? 'Continuous' : 'Broken'}</span></span>
+                              </div>
+                              <div className="text-center py-1">
+                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
+                                  background: rec.hookAttempt.finalResult.startsWith('Successful') ? '#00ff8820' : rec.hookAttempt.finalResult.startsWith('Partial') ? '#f59e0b20' : '#f9731620',
+                                  color: rec.hookAttempt.finalResult.startsWith('Successful') ? '#00ff88' : rec.hookAttempt.finalResult.startsWith('Partial') ? '#f59e0b' : '#f97316',
+                                }}>{rec.hookAttempt.finalResult}</span>
+                              </div>
+                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.hookAttempt.coachingFeedback}</p>
+                            </div>
+                          )}
+
+                          {rec.hookDeepAnalysis ? (
+                            <div className="rounded-xl border border-blue-400/20 bg-blue-400/5 p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-blue-400">🤖 Hook Deep Analysis</p>
+                                {rec.hookDeepAnalysis.overallScore > 0 && (
+                                  <span className="ml-auto text-xs font-bold text-blue-400">{rec.hookDeepAnalysis.overallScore}/100</span>
+                                )}
+                              </div>
+                              {rec.hookDeepAnalysis.technicalBreakdown && (
+                                <p className="text-slate-300 text-xs">{rec.hookDeepAnalysis.technicalBreakdown}</p>
+                              )}
+                              {rec.hookDeepAnalysis.keyStrengths?.length > 0 && (
+                                <div>
+                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
+                                  {rec.hookDeepAnalysis.keyStrengths.map((s: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.hookDeepAnalysis.criticalFixes?.length > 0 && (
+                                <div>
+                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
+                                  {rec.hookDeepAnalysis.criticalFixes.map((f: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.hookDeepAnalysis.improvementDrills?.length > 0 && (
+                                <div>
+                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
+                                  {rec.hookDeepAnalysis.improvementDrills.map((d: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => getHookDeepAnalysis(rec)}
+                              disabled={loadingHook === rec.id}
+                              className="w-full py-2.5 rounded-xl border border-blue-400/30 text-blue-400 text-xs font-bold hover:bg-blue-400/10 transition-all disabled:opacity-50">
+                              {loadingHook === rec.id ? '⚙ ORION analysing Hook...' : '🔵 Get Hook Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Usi Analysis */}
+                      {rec.usiOpportunity && (
+                        <div className="space-y-2">
+                          <div className="rounded-xl border p-3 space-y-2" style={{
+                            borderColor: `${rec.usiOpportunity.overlayColor}40`,
+                            background: `${rec.usiOpportunity.overlayColor}08`,
+                          }}>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-bold" style={{ color: rec.usiOpportunity.overlayColor }}>
+                                💉 Usi Detection
+                              </p>
+                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                                style={{ background: rec.usiOpportunity.available ? '#00ff8820' : '#f9731620',
+                                  color: rec.usiOpportunity.available ? '#00ff88' : '#f97316' }}>
+                                {rec.usiOpportunity.available ? 'Chest Open' : 'Chest Guarded'}
+                              </span>
+                            </div>
+                            <p className="text-slate-300 text-xs">{rec.usiOpportunity.reason}</p>
+                            {rec.usiOpportunity.warning && (
+                              <p className="text-yellow-400 text-[10px]">⚠ {rec.usiOpportunity.warning}</p>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-slate-500">Counter risk:</span>
+                              <span className="font-bold" style={{
+                                color: rec.usiOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.usiOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                              }}>{rec.usiOpportunity.counterRisk}</span>
+                            </div>
+                          </div>
+
+                          {rec.usiAttempt && (
+                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
+                              <p className="text-xs font-bold text-slate-300">💉 Usi Attempt</p>
+                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">Target</p>
+                                  <p className="text-white font-bold">{rec.usiAttempt.touchTarget}</p>
+                                  <p style={{ color: rec.usiAttempt.touchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
+                                    {rec.usiAttempt.touchResult}
+                                  </p>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">Recovery</p>
+                                  <p className="text-white font-bold">{rec.usiAttempt.recoverySpeed}</p>
+                                  <p className="text-slate-400">{rec.usiAttempt.speedRating}</p>
+                                </div>
+                              </div>
+                              <p className="text-slate-400 text-[10px]">Path: {rec.usiAttempt.stickPath}</p>
+                              <div className="text-center py-1">
+                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
+                                  background: rec.usiAttempt.finalResult === 'Successful Usi' ? '#00ff8820' : rec.usiAttempt.finalResult === 'Partial Usi' ? '#f59e0b20' : '#f9731620',
+                                  color: rec.usiAttempt.finalResult === 'Successful Usi' ? '#00ff88' : rec.usiAttempt.finalResult === 'Partial Usi' ? '#f59e0b' : '#f97316',
+                                }}>{rec.usiAttempt.finalResult}</span>
+                              </div>
+                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.usiAttempt.coachingFeedback}</p>
+                            </div>
+                          )}
+
+                          {rec.usiDeepAnalysis ? (
+                            <div className="rounded-xl border border-orion-blue/20 bg-orion-blue/5 p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-orion-blue">🤖 Usi Deep Analysis</p>
+                                {rec.usiDeepAnalysis.overallScore > 0 && (
+                                  <span className="ml-auto text-xs font-bold text-orion-blue">{rec.usiDeepAnalysis.overallScore}/100</span>
+                                )}
+                              </div>
+                              {rec.usiDeepAnalysis.technicalBreakdown && (
+                                <p className="text-slate-300 text-xs">{rec.usiDeepAnalysis.technicalBreakdown}</p>
+                              )}
+                              {rec.usiDeepAnalysis.keyStrengths?.length > 0 && (
+                                <div>
+                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
+                                  {rec.usiDeepAnalysis.keyStrengths.map((s: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.usiDeepAnalysis.criticalFixes?.length > 0 && (
+                                <div>
+                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
+                                  {rec.usiDeepAnalysis.criticalFixes.map((f: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.usiDeepAnalysis.improvementDrills?.length > 0 && (
+                                <div>
+                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
+                                  {rec.usiDeepAnalysis.improvementDrills.map((d: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.usiDeepAnalysis.nextTechniqueToTry && (
+                                <p className="text-orion-blue text-[10px]">Next: {rec.usiDeepAnalysis.nextTechniqueToTry}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => getUsiDeepAnalysis(rec)}
+                              disabled={loadingUsi === rec.id}
+                              className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
+                              {loadingUsi === rec.id ? '⚙ ORION analysing Usi...' : '💉 Get Usi Deep Analysis'}
                             </button>
                           )}
                         </div>
