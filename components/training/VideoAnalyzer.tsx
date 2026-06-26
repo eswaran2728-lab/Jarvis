@@ -7,6 +7,10 @@ import { PoseMetrics } from '@/types'
 import { calculateAttackSpeed, calculatePower, detectTechnique, estimateHeight, estimateWeight, generateMotionRemarks, detectSpinScore, calcReflexScore, powerScore } from '@/lib/pose/motionAnalysis'
 import { getSuggestedClips } from '@/lib/skillLibrary/store'
 import { ReferenceClip } from '@/types/skillLibrary'
+import {
+  detectUStrikeOpportunity, analyzeUStrikeAttempt, drawUStrikeOverlay, estimateStickTip,
+  UStrikeOpportunity, UStrikeAttemptResult, UStrikeTimestamp, TipPoint,
+} from '@/lib/pose/uStrikeDetection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,6 +45,9 @@ type AnalysisRecord = {
   tags?: string[]
   savedAsRef?: boolean
   videoName?: string
+  uStrikeOpportunity?: UStrikeOpportunity
+  uStrikeAttempt?: UStrikeAttemptResult
+  uStrikeDeepAnalysis?: any
 }
 
 type HighlightCategory = 'strike' | 'defense' | 'counter' | 'acha'
@@ -412,6 +419,8 @@ export default function VideoAnalyzer() {
   const [counterClips, setCounterClips] = useState<HighlightClip[]>([])
   const [cuttingClip, setCuttingClip] = useState<{ id: number; category: HighlightCategory } | null>(null)
   const [savedFlash, setSavedFlash]   = useState<string | null>(null)
+  const [liveUStrike, setLiveUStrike] = useState<UStrikeOpportunity | null>(null)
+  const [loadingUStrike, setLoadingUStrike] = useState<number | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -434,6 +443,7 @@ export default function VideoAnalyzer() {
   const videoSrcRef      = useRef<string | null>(null)
   const videoNameRef     = useRef<string>('')
   const recordsRef       = useRef<AnalysisRecord[]>([])
+  const tipHistoryRef    = useRef<TipPoint[][]>([[], [], [], []])
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -601,6 +611,25 @@ export default function VideoAnalyzer() {
     setLoadingAnalysis(null)
   }, [])
 
+  const getUStrikeDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.uStrikeOpportunity) return
+    setLoadingUStrike(rec.id)
+    try {
+      const res = await fetch('/api/u-strike-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunity: rec.uStrikeOpportunity,
+          attempt: rec.uStrikeAttempt || null,
+          fighter: rec.players[0]?.label || 'Player 1',
+          videoTime: rec.videoTime,
+        }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, uStrikeDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingUStrike(null)
+  }, [])
+
   // ─── Clip cutting ──────────────────────────────────────────────────────────
 
   const cutAndSaveHighlight = useCallback(async (rec: AnalysisRecord, category: HighlightCategory) => {
@@ -719,9 +748,39 @@ export default function VideoAnalyzer() {
       const allLandmarks = result?.landmarks || []
       if (allLandmarks.length > 0) {
         drawAllPlayers(allLandmarks, canvas, video)
+
+        // U Strike opportunity detection
+        const attackerLm = allLandmarks[0]
+        const defenderLm = allLandmarks[1] || null
+        const opportunity = detectUStrikeOpportunity(attackerLm, defenderLm)
+        setLiveUStrike(opportunity)
+
+        // Update tip history for attacker (player 0)
+        const tip = estimateStickTip(attackerLm)
+        if (tip) {
+          tipHistoryRef.current[0] = [
+            ...tipHistoryRef.current[0].slice(-29),
+            { x: tip.x, y: tip.y, ts: performance.now() },
+          ]
+        }
+
+        // Draw U Strike overlay on top of skeleton
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          const W = canvas.width; const H = canvas.height
+          drawUStrikeOverlay(ctx, W, H, attackerLm, defenderLm, opportunity, tipHistoryRef.current[0])
+        }
+
+        // Attempt analysis
+        const attempt = analyzeUStrikeAttempt(attackerLm, defenderLm, tipHistoryRef.current[0], opportunity)
+
         const snapshot = captureSnapshot(video, canvas)
         const timeSec = video.currentTime
-        const rec = buildRecord(allLandmarks, formatTime(timeSec), snapshot, timeSec)
+        const rec: AnalysisRecord = {
+          ...buildRecord(allLandmarks, formatTime(timeSec), snapshot, timeSec),
+          uStrikeOpportunity: opportunity,
+          uStrikeAttempt: attempt.detected ? attempt : undefined,
+        }
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
         if (withAdvice) getCombatAdvice(rec)
@@ -806,6 +865,23 @@ export default function VideoAnalyzer() {
           const players = allLandmarks.map((lm: any, i: number) => buildPlayerData(lm, i))
           prevLandmarksRef.current = allLandmarks; prevTimestampRef.current = performance.now()
           setLivePlayers(players)
+
+          // Live U Strike opportunity for camera mode
+          const attackerLm = allLandmarks[0]
+          const defenderLm = allLandmarks[1] || null
+          const opportunity = detectUStrikeOpportunity(attackerLm, defenderLm)
+          setLiveUStrike(opportunity)
+          const tip = estimateStickTip(attackerLm)
+          if (tip) {
+            tipHistoryRef.current[0] = [
+              ...tipHistoryRef.current[0].slice(-29),
+              { x: tip.x, y: tip.y, ts: performance.now() },
+            ]
+          }
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            drawUStrikeOverlay(ctx, canvas.width, canvas.height, attackerLm, defenderLm, opportunity, tipHistoryRef.current[0])
+          }
         }
       }, 300)
     } catch (err) { console.error('Camera error:', err) }
@@ -1022,6 +1098,41 @@ export default function VideoAnalyzer() {
                     </button>
                   </div>
 
+                  {/* Live U Strike suggestion banner */}
+                  {liveUStrike && liveUStrike.type !== 'NONE' && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
+                      background: `${liveUStrike.overlayColor}10`,
+                      borderColor: `${liveUStrike.overlayColor}50`,
+                    }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveUStrike.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveUStrike.overlayColor }}>
+                          {liveUStrike.available ? '🎯 U Strike Opening!' : '⚠️ U Strike Risk'}
+                        </p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                          style={{ background: `${liveUStrike.overlayColor}20`, color: liveUStrike.overlayColor }}>
+                          {liveUStrike.type.replace('_', ' ')}
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{liveUStrike.suggestion}</p>
+                      {liveUStrike.openTargets.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {liveUStrike.openTargets.map(t => (
+                            <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
+                          ))}
+                        </div>
+                      )}
+                      {liveUStrike.warning && (
+                        <p className="text-yellow-400 text-[10px]">⚠ {liveUStrike.warning}</p>
+                      )}
+                      <p className="text-slate-500 text-[10px]">
+                        Counter risk: <span className="font-bold" style={{
+                          color: liveUStrike.counterRisk === 'LOW' ? '#00ff88' : liveUStrike.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                        }}>{liveUStrike.counterRisk}</span>
+                      </p>
+                    </div>
+                  )}
+
                   {(loadingAdvice || combatAdvice) && (
                     <div className="rounded-2xl border p-4 space-y-2" style={{ background: '#a855f708', borderColor: '#a855f730' }}>
                       <div className="flex items-center gap-2">
@@ -1222,6 +1333,125 @@ export default function VideoAnalyzer() {
                           className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all">
                           ⚡ Get Pros &amp; Cons
                         </button>
+                      )}
+
+                      {/* U Strike Analysis */}
+                      {rec.uStrikeOpportunity && (
+                        <div className="space-y-2">
+                          <div className="rounded-xl border p-3 space-y-2" style={{
+                            borderColor: `${rec.uStrikeOpportunity.overlayColor}40`,
+                            background: `${rec.uStrikeOpportunity.overlayColor}08`,
+                          }}>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs font-bold" style={{ color: rec.uStrikeOpportunity.overlayColor }}>
+                                🌀 U Strike Detection
+                              </p>
+                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
+                                style={{ background: `${rec.uStrikeOpportunity.overlayColor}20`, color: rec.uStrikeOpportunity.overlayColor }}>
+                                {rec.uStrikeOpportunity.type.replace(/_/g, ' ')}
+                              </span>
+                            </div>
+                            <p className="text-slate-300 text-xs">{rec.uStrikeOpportunity.reason}</p>
+                            {rec.uStrikeOpportunity.openTargets.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                <span className="text-[10px] text-slate-500">Open targets:</span>
+                                {rec.uStrikeOpportunity.openTargets.map(t => (
+                                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
+                                ))}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 text-[10px]">
+                              <span className="text-slate-500">Counter risk:</span>
+                              <span className="font-bold" style={{
+                                color: rec.uStrikeOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.uStrikeOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
+                              }}>{rec.uStrikeOpportunity.counterRisk}</span>
+                            </div>
+                            {rec.uStrikeOpportunity.warning && (
+                              <p className="text-yellow-400 text-[10px]">⚠ {rec.uStrikeOpportunity.warning}</p>
+                            )}
+                          </div>
+
+                          {rec.uStrikeAttempt && (
+                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
+                              <p className="text-xs font-bold text-slate-300">🎯 Attempt Analysis</p>
+                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">1st Touch</p>
+                                  <p className="text-white font-bold">{rec.uStrikeAttempt.firstTouchTarget}</p>
+                                  <p style={{ color: rec.uStrikeAttempt.firstTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
+                                    {rec.uStrikeAttempt.firstTouchResult}
+                                  </p>
+                                </div>
+                                <div className="bg-slate-900/60 rounded-lg p-2">
+                                  <p className="text-slate-500 mb-0.5">2nd Touch</p>
+                                  <p className="text-white font-bold">{rec.uStrikeAttempt.secondTouchTarget}</p>
+                                  <p style={{ color: rec.uStrikeAttempt.secondTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
+                                    {rec.uStrikeAttempt.secondTouchResult}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-slate-500">Speed: <span className="text-white">{rec.uStrikeAttempt.speedRating}</span></span>
+                                <span className="text-slate-500">Path: <span className="text-white">{rec.uStrikeAttempt.pathClarity}</span></span>
+                              </div>
+                              <div className="text-center py-1">
+                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
+                                  background: rec.uStrikeAttempt.finalResult === 'Successful U Strike' ? '#00ff8820' : rec.uStrikeAttempt.finalResult === 'Partial U Strike' ? '#f59e0b20' : '#f9731620',
+                                  color: rec.uStrikeAttempt.finalResult === 'Successful U Strike' ? '#00ff88' : rec.uStrikeAttempt.finalResult === 'Partial U Strike' ? '#f59e0b' : '#f97316',
+                                }}>{rec.uStrikeAttempt.finalResult}</span>
+                              </div>
+                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.uStrikeAttempt.coachingFeedback}</p>
+                            </div>
+                          )}
+
+                          {rec.uStrikeDeepAnalysis ? (
+                            <div className="rounded-xl border border-orion-blue/20 bg-orion-blue/5 p-3 space-y-2">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-orion-blue">🤖 ORION Deep Analysis</p>
+                                {rec.uStrikeDeepAnalysis.overallScore > 0 && (
+                                  <span className="ml-auto text-xs font-bold text-orion-blue">{rec.uStrikeDeepAnalysis.overallScore}/100</span>
+                                )}
+                              </div>
+                              {rec.uStrikeDeepAnalysis.technicalBreakdown && (
+                                <p className="text-slate-300 text-xs">{rec.uStrikeDeepAnalysis.technicalBreakdown}</p>
+                              )}
+                              {rec.uStrikeDeepAnalysis.keyStrengths?.length > 0 && (
+                                <div>
+                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
+                                  {rec.uStrikeDeepAnalysis.keyStrengths.map((s: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.uStrikeDeepAnalysis.criticalFixes?.length > 0 && (
+                                <div>
+                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
+                                  {rec.uStrikeDeepAnalysis.criticalFixes.map((f: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.uStrikeDeepAnalysis.improvementDrills?.length > 0 && (
+                                <div>
+                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
+                                  {rec.uStrikeDeepAnalysis.improvementDrills.map((d: string, i: number) => (
+                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {rec.uStrikeDeepAnalysis.nextTechniqueToTry && (
+                                <p className="text-orion-blue text-[10px]">Next: {rec.uStrikeDeepAnalysis.nextTechniqueToTry}</p>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => getUStrikeDeepAnalysis(rec)}
+                              disabled={loadingUStrike === rec.id}
+                              className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
+                              {loadingUStrike === rec.id ? '⚙ ORION analysing U Strike...' : '🌀 Get U Strike Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
                       )}
 
                       {/* Per-player scores */}
