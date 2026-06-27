@@ -1,20 +1,19 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Swords, Video, ClipboardList, BookOpen } from 'lucide-react'
+import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Video, ClipboardList, BookOpen } from 'lucide-react'
 
 const navItems = [
-  { href: '/dashboard', icon: Home, label: 'Dashboard' },
-  { href: '/assistant', icon: MessageCircle, label: 'Assistant' },
-  { href: '/training', icon: Dumbbell, label: 'Training' },
-  { href: '/training/silambam', icon: Swords, label: 'Silambam' },
-  { href: '/training/silambam/rules', icon: BookOpen, label: 'Combat Rules' },
-  { href: '/training/video', icon: Video, label: 'Video Analysis' },
+  { href: '/dashboard',  icon: Home,          label: 'Dashboard'    },
+  { href: '/analysis',   icon: Video,         label: 'Analysis'     },
+  { href: '/academy',    icon: BookOpen,      label: 'Academy'      },
+  { href: '/assistant',  icon: MessageCircle, label: 'ORION'        },
+  { href: '/training',   icon: Dumbbell,      label: 'Training'     },
   { href: '/training/plan', icon: ClipboardList, label: 'Athlete Plan' },
-  { href: '/tasks', icon: CheckSquare, label: 'Tasks' },
-  { href: '/reminders', icon: Bell, label: 'Reminders' },
-  { href: '/progress', icon: TrendingUp, label: 'Progress' },
-  { href: '/settings', icon: Settings, label: 'Settings' },
+  { href: '/tasks',      icon: CheckSquare,   label: 'Tasks'        },
+  { href: '/reminders',  icon: Bell,          label: 'Reminders'    },
+  { href: '/progress',   icon: TrendingUp,    label: 'Progress'     },
+  { href: '/settings',   icon: Settings,      label: 'Settings'     },
 ]
 
 export default function Sidebar() {
