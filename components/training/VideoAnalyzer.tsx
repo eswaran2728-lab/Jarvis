@@ -1150,20 +1150,39 @@ export default function VideoAnalyzer() {
           zipOpportunity: zipOpp.available ? zipOpp : undefined,
           zipAttempt: zipAttempt.detected ? zipAttempt : undefined,
         }
-        // Significance score — auto-pause if high enough and min 4s gap
-        let sigScore = 0
-        if (gapSt.detected && gapSt.counterRisk === 'LOW') sigScore = Math.max(sigScore, 0.80)
-        if (echoOpp.opponentAttackDetected) sigScore = Math.max(sigScore, 0.90)
-        if (trapOpp.available) sigScore = Math.max(sigScore, 0.75)
-        if (retreatSt.retreating && retreatSt.stickStatus === 'Dropped') sigScore = Math.max(sigScore, 0.70)
-        if (bavalaiSt.detected && bavalaiSt.bestOpportunity) sigScore = Math.max(sigScore, 0.65)
+        // Auto-pause on ANY attack, defence, or counter detection — min 4s gap between pauses
+        const anyDetection = (
+          uStrikeOpp.available ||
+          hookOpp.available ||
+          usiOpp.available ||
+          sweepOpp.available ||
+          gapSt.detected ||
+          echoOpp.opponentAttackDetected ||
+          trapOpp.available ||
+          defenceOpp.threatDetected ||
+          retreatSt.retreating ||
+          slideOpp.available ||
+          zipOpp.available ||
+          (bavalaiSt.detected && !!bavalaiSt.bestOpportunity)
+        )
 
         const nowSec = video.currentTime
         const sinceLastPause = nowSec - lastPauseTimeRef.current
-        if (sigScore >= 0.70 && sinceLastPause >= 4) {
+        if (anyDetection && sinceLastPause >= 4) {
           lastPauseTimeRef.current = nowSec
           video.pause(); setIsPlaying(false); setIsPausedByOrion(true); setCoachingMoment(null)
-          const momentType = echoOpp.opponentAttackDetected ? 'ECHO_COUNTER' : trapOpp.available ? 'TRAP_OPPORTUNITY' : gapSt.detected ? 'GAP_OPENING' : retreatSt.retreating ? 'RETREAT_MISTAKE' : 'BAVALAI_OPPORTUNITY'
+          const momentType = echoOpp.opponentAttackDetected ? 'ECHO_COUNTER'
+            : trapOpp.available ? 'TRAP_OPPORTUNITY'
+            : defenceOpp.threatDetected ? 'DEFENCE_NEEDED'
+            : gapSt.detected ? 'GAP_OPENING'
+            : uStrikeOpp.available ? 'USI_STRIKE_CHANCE'
+            : hookOpp.available ? 'HOOK_CHANCE'
+            : usiOpp.available ? 'USI_CHANCE'
+            : sweepOpp.available ? 'SWEEP_CHANCE'
+            : slideOpp.available ? 'SLIDE_CHANCE'
+            : zipOpp.available ? 'ZIP_CHANCE'
+            : retreatSt.retreating ? 'RETREAT_MOMENT'
+            : 'BAVALAI_OPPORTUNITY'
           fetchCoachingMoment({
             videoTime: formatTime(nowSec), momentType,
             player1Tech: rec.players[0]?.technique || 'Unknown',
@@ -1243,13 +1262,13 @@ export default function VideoAnalyzer() {
   }, [videoSrc, analyseFrame])
 
   useEffect(() => {
-    if (autoAnalyse && isPlaying) {
-      autoIntervalRef.current = setInterval(() => analyseFrame(false), 800)
+    if (isPlaying) {
+      autoIntervalRef.current = setInterval(() => analyseFrame(false), 600)
     } else {
       if (autoIntervalRef.current) { clearInterval(autoIntervalRef.current); autoIntervalRef.current = null }
     }
     return () => { if (autoIntervalRef.current) clearInterval(autoIntervalRef.current) }
-  }, [autoAnalyse, isPlaying, analyseFrame])
+  }, [isPlaying, analyseFrame])
 
   // ─── Camera ────────────────────────────────────────────────────────────────
 
@@ -1333,21 +1352,25 @@ export default function VideoAnalyzer() {
           }
           prevDefenderLmRef.current = camDef
 
-          // Live camera: compute significance and show real-time coaching card
-          let camSig = 0
-          if (camGapSt.detected && camGapSt.counterRisk === 'LOW') camSig = Math.max(camSig, 0.80)
-          if (camEchoOpp.opponentAttackDetected) camSig = Math.max(camSig, 0.90)
-          if (camTrapOpp.available) camSig = Math.max(camSig, 0.75)
-          if (camRetSt.retreating && camRetSt.stickStatus === 'Dropped') camSig = Math.max(camSig, 0.70)
-          if (camBavalaiSt.detected && camBavalaiSt.bestOpportunity) camSig = Math.max(camSig, 0.65)
-          if (camSig >= 0.65) {
-            const camMomentType = camEchoOpp.opponentAttackDetected ? 'ECHO_COUNTER' : camTrapOpp.available ? 'TRAP_OPPORTUNITY' : camGapSt.detected ? 'GAP_OPENING' : camRetSt.retreating ? 'RETREAT_MISTAKE' : 'BAVALAI_OPPORTUNITY'
+          // Live camera: show coaching card on any attack/defence/counter detection
+          const camAnyDetection = (
+            camUStrikeOpp.available || camHookOpp.available || camUsiOpp.available ||
+            camSweepOpp.available || camGapSt.detected || camEchoOpp.opponentAttackDetected ||
+            camTrapOpp.available || camDefenceOpp.threatDetected || camRetSt.retreating ||
+            camSlideOpp.available || camZipOpp.available ||
+            (camBavalaiSt.detected && !!camBavalaiSt.bestOpportunity)
+          )
+          const camSig = camAnyDetection ? 0.70 : 0
+          if (camAnyDetection) {
+            const camMomentType = camEchoOpp.opponentAttackDetected ? 'ECHO COUNTER' : camTrapOpp.available ? 'TRAP' : camDefenceOpp.threatDetected ? 'DEFENCE' : camGapSt.detected ? 'GAP OPENING' : camUStrikeOpp.available ? 'U STRIKE' : camHookOpp.available ? 'HOOK' : camUsiOpp.available ? 'USI STRIKE' : camSweepOpp.available ? 'SWEEP' : camSlideOpp.available ? 'SLIDE' : camZipOpp.available ? 'ZIP' : camRetSt.retreating ? 'RETREAT' : 'BAVALAI'
             setLiveCameraCoach({
               momentType: camMomentType,
               gap: camGapSt.detected ? `Gap: ${camGapSt.gapType} — best: ${camGapSt.bestRecommendation?.technique || '?'}` : null,
               echo: camEchoOpp.opponentAttackDetected ? `Echo from ${camEchoOpp.attackDirection}` : null,
               trap: camTrapOpp.available ? `Trap: fake ${camTrapOpp.suggestedFakeTarget} → hit ${camTrapOpp.suggestedRealTarget}` : null,
-              retreat: camRetSt.retreating && camRetSt.stickStatus === 'Dropped' ? 'Keep stick active during retreat!' : null,
+              defence: camDefenceOpp.threatDetected ? `Defend: ${camDefenceOpp.recommendedDefence}` : null,
+              attack: camUStrikeOpp.available ? 'U Strike opening!' : camHookOpp.available ? 'Hook opening!' : camUsiOpp.available ? 'Usi opening!' : camSweepOpp.available ? 'Sweep available!' : camSlideOpp.available ? 'Slide available!' : camZipOpp.available ? 'Zip available!' : null,
+              retreat: camRetSt.retreating ? (camRetSt.stickStatus === 'Dropped' ? 'KEEP STICK ACTIVE during retreat!' : `Retreating — ${camRetSt.speed}`) : null,
               bavalai: camBavalaiSt.bestOpportunity ? `Bavalai chance: ${camBavalaiSt.bestOpportunity.technique}` : null,
               confidence: Math.round(camSig * 100),
             })
@@ -1795,12 +1818,13 @@ export default function VideoAnalyzer() {
                     <div className="rounded-2xl border border-[#ef4444]/50 bg-[#ef4444]/5 p-3 space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse" />
-                        <span className="text-[#ef4444] text-xs font-bold uppercase tracking-wide">ORION ALERT — {liveCameraCoach.momentType?.replace(/_/g, ' ')}</span>
-                        <span className="ml-auto text-[10px] text-slate-500">{liveCameraCoach.confidence}%</span>
+                        <span className="text-[#ef4444] text-xs font-bold uppercase tracking-wide">ORION — {liveCameraCoach.momentType}</span>
                       </div>
+                      {liveCameraCoach.attack && <p className="text-orion-blue text-xs font-semibold">⚔ {liveCameraCoach.attack}</p>}
                       {liveCameraCoach.gap && <p className="text-slate-200 text-xs">🎯 {liveCameraCoach.gap}</p>}
                       {liveCameraCoach.echo && <p className="text-purple-300 text-xs">↩ {liveCameraCoach.echo}</p>}
                       {liveCameraCoach.trap && <p className="text-orange-300 text-xs">🎭 {liveCameraCoach.trap}</p>}
+                      {liveCameraCoach.defence && <p className="text-green-300 text-xs">🛡 {liveCameraCoach.defence}</p>}
                       {liveCameraCoach.bavalai && <p className="text-yellow-300 text-xs">⚡ {liveCameraCoach.bavalai}</p>}
                       {liveCameraCoach.retreat && <p className="text-red-400 text-xs font-semibold">⚠ {liveCameraCoach.retreat}</p>}
                     </div>
