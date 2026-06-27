@@ -27,6 +27,32 @@ import {
   analyzeBavalaiState, drawBavalaiOverlay, getBavalaiWristAngle,
   BavalaiState, BavalaiPoint,
 } from '@/lib/pose/bavalaiDetection'
+import {
+  detectGap, drawGapOverlay, GapState,
+} from '@/lib/pose/gapDetection'
+import {
+  detectEchoOpportunity, analyzeEchoAttempt, drawEchoOverlay,
+  EchoOpportunity, EchoAttemptResult,
+} from '@/lib/pose/echoDetection'
+import {
+  detectTrapOpportunity, analyzeTrapAttempt, drawTrapOverlay,
+  TrapOpportunity, TrapAttemptResult, TrapPoint,
+} from '@/lib/pose/trapDetection'
+import {
+  detectDefenceOpportunity, analyzeDefenceAttempt, drawDefenceOverlay,
+  DefenceOpportunity, DefenceAttemptResult,
+} from '@/lib/pose/defenceDetection'
+import {
+  detectRetreat, drawRetreatOverlay, RetreatState,
+} from '@/lib/pose/retreatDetection'
+import {
+  detectSlideOpportunity, analyzeSlideAttempt, drawSlideOverlay,
+  SlideOpportunity, SlideAttemptResult, SlidePoint,
+} from '@/lib/pose/slideDetection'
+import {
+  detectZipOpportunity, analyzeZipAttempt, drawZipOverlay,
+  ZipOpportunity, ZipAttemptResult, ZipPoint,
+} from '@/lib/pose/zipDetection'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +100,24 @@ type AnalysisRecord = {
   sweepAttempt?: SweepAttemptResult
   sweepDeepAnalysis?: any
   bavalaiState?: BavalaiState
+  gapState?: GapState
+  echoOpportunity?: EchoOpportunity
+  echoAttempt?: EchoAttemptResult
+  echoDeepAnalysis?: any
+  trapOpportunity?: TrapOpportunity
+  trapAttempt?: TrapAttemptResult
+  trapDeepAnalysis?: any
+  defenceOpportunity?: DefenceOpportunity
+  defenceAttempt?: DefenceAttemptResult
+  defenceDeepAnalysis?: any
+  retreatState?: RetreatState
+  retreatDeepAnalysis?: any
+  slideOpportunity?: SlideOpportunity
+  slideAttempt?: SlideAttemptResult
+  slideDeepAnalysis?: any
+  zipOpportunity?: ZipOpportunity
+  zipAttempt?: ZipAttemptResult
+  zipDeepAnalysis?: any
 }
 
 type HighlightCategory = 'strike' | 'defense' | 'counter' | 'acha'
@@ -454,6 +498,18 @@ export default function VideoAnalyzer() {
   const [loadingHook, setLoadingHook]   = useState<number | null>(null)
   const [loadingUsi, setLoadingUsi]     = useState<number | null>(null)
   const [loadingSweep, setLoadingSweep] = useState<number | null>(null)
+  const [liveGap, setLiveGap]           = useState<GapState | null>(null)
+  const [liveEcho, setLiveEcho]         = useState<EchoOpportunity | null>(null)
+  const [liveTrap, setLiveTrap]         = useState<TrapOpportunity | null>(null)
+  const [liveDefence, setLiveDefence]   = useState<DefenceOpportunity | null>(null)
+  const [liveRetreat, setLiveRetreat]   = useState<RetreatState | null>(null)
+  const [liveSlide, setLiveSlide]       = useState<SlideOpportunity | null>(null)
+  const [liveZip, setLiveZip]           = useState<ZipOpportunity | null>(null)
+  const [loadingEcho, setLoadingEcho]   = useState<number | null>(null)
+  const [loadingTrap, setLoadingTrap]   = useState<number | null>(null)
+  const [loadingDefence, setLoadingDefence] = useState<number | null>(null)
+  const [loadingSlide, setLoadingSlide] = useState<number | null>(null)
+  const [loadingZip, setLoadingZip]     = useState<number | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -481,6 +537,11 @@ export default function VideoAnalyzer() {
   const usiHistoryRef    = useRef<UsiPoint[][]>([[], [], [], []])
   const sweepHistoryRef  = useRef<SweepPoint[][]>([[], [], [], []])
   const bavalaiHistoryRef = useRef<BavalaiPoint[][]>([[], [], [], []])
+  const trapHistoryRef   = useRef<TrapPoint[][]>([[], [], [], []])
+  const slideHistoryRef  = useRef<SlidePoint[][]>([[], [], [], []])
+  const zipHistoryRef    = useRef<ZipPoint[][]>([[], [], [], []])
+  const prevDefenderLmRef = useRef<any[] | null>(null)
+  const wristSpeedHistoryRef = useRef<number[]>([])
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -724,6 +785,76 @@ export default function VideoAnalyzer() {
     setLoadingSweep(null)
   }, [])
 
+  const getEchoDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.echoOpportunity) return
+    setLoadingEcho(rec.id)
+    try {
+      const res = await fetch('/api/echo-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunity: rec.echoOpportunity, attempt: rec.echoAttempt || null, fighter: rec.players[0]?.label || 'Player 1', videoTime: rec.videoTime }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, echoDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingEcho(null)
+  }, [])
+
+  const getTrapDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.trapOpportunity) return
+    setLoadingTrap(rec.id)
+    try {
+      const res = await fetch('/api/trap-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunity: rec.trapOpportunity, attempt: rec.trapAttempt || null, fighter: rec.players[0]?.label || 'Player 1', videoTime: rec.videoTime }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, trapDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingTrap(null)
+  }, [])
+
+  const getDefenceDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.defenceOpportunity) return
+    setLoadingDefence(rec.id)
+    try {
+      const res = await fetch('/api/defence-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunity: rec.defenceOpportunity, attempt: rec.defenceAttempt || null, fighter: rec.players[0]?.label || 'Player 1', videoTime: rec.videoTime }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, defenceDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingDefence(null)
+  }, [])
+
+  const getSlideDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.slideOpportunity) return
+    setLoadingSlide(rec.id)
+    try {
+      const res = await fetch('/api/slide-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunity: rec.slideOpportunity, attempt: rec.slideAttempt || null, fighter: rec.players[0]?.label || 'Player 1', videoTime: rec.videoTime }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, slideDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingSlide(null)
+  }, [])
+
+  const getZipDeepAnalysis = useCallback(async (rec: AnalysisRecord) => {
+    if (!rec.zipOpportunity) return
+    setLoadingZip(rec.id)
+    try {
+      const res = await fetch('/api/zip-analysis', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opportunity: rec.zipOpportunity, attempt: rec.zipAttempt || null, fighter: rec.players[0]?.label || 'Player 1', videoTime: rec.videoTime }),
+      })
+      const data = await res.json()
+      setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, zipDeepAnalysis: data } : r))
+    } catch { /* silent */ }
+    setLoadingZip(null)
+  }, [])
+
   // ─── Clip cutting ──────────────────────────────────────────────────────────
 
   const cutAndSaveHighlight = useCallback(async (rec: AnalysisRecord, category: HighlightCategory) => {
@@ -884,7 +1015,56 @@ export default function VideoAnalyzer() {
         const bavalaiSt = analyzeBavalaiState(attackerLm, defenderLm, bavalaiHistoryRef.current[0])
         setLiveBavalai(bavalaiSt)
 
-        // Draw overlays on canvas (U Strike, Hook, Usi, Sweep, Bavalai)
+        // Gap detection
+        const gapSt = detectGap(attackerLm, defenderLm)
+        setLiveGap(gapSt)
+
+        // Echo detection
+        const echoOpp = detectEchoOpportunity(attackerLm, defenderLm, prevDefenderLmRef.current)
+        setLiveEcho(echoOpp)
+
+        // Trap detection
+        const trapOpp = detectTrapOpportunity(attackerLm, defenderLm)
+        setLiveTrap(trapOpp)
+        const tTip = attackerLm[16] ? { x: attackerLm[16].x, y: attackerLm[16].y, ts: now } : null
+        if (tTip) trapHistoryRef.current[0] = [...trapHistoryRef.current[0].slice(-29), tTip]
+
+        // Defence detection
+        const defenceOpp = detectDefenceOpportunity(attackerLm, defenderLm, prevDefenderLmRef.current, bavalaiSt.detected)
+        setLiveDefence(defenceOpp)
+
+        // Retreat detection
+        const retreatSt = detectRetreat(
+          attackerLm, prevLandmarksRef.current[0] || null, defenderLm,
+          wristSpeedHistoryRef.current, bavalaiSt.detected,
+        )
+        setLiveRetreat(retreatSt)
+
+        // Wrist speed tracking for retreat
+        if (attackerLm[16] && prevLandmarksRef.current[0]?.[16]) {
+          const ws = Math.sqrt(
+            Math.pow(attackerLm[16].x - prevLandmarksRef.current[0][16].x, 2) +
+            Math.pow(attackerLm[16].y - prevLandmarksRef.current[0][16].y, 2),
+          )
+          wristSpeedHistoryRef.current = [...wristSpeedHistoryRef.current.slice(-19), ws]
+        }
+
+        // Slide detection
+        const slideOpp = detectSlideOpportunity(attackerLm, defenderLm)
+        setLiveSlide(slideOpp)
+        const slTip = attackerLm[16] ? { x: attackerLm[16].x, y: attackerLm[16].y, ts: now } : null
+        if (slTip) slideHistoryRef.current[0] = [...slideHistoryRef.current[0].slice(-29), slTip]
+
+        // Zip detection
+        const zipOpp = detectZipOpportunity(attackerLm, defenderLm)
+        setLiveZip(zipOpp)
+        const zTip = attackerLm[16] ? { x: attackerLm[16].x, y: attackerLm[16].y, ts: now } : null
+        if (zTip) zipHistoryRef.current[0] = [...zipHistoryRef.current[0].slice(-29), zTip]
+
+        // Store prev defender landmarks for Echo/Defence next frame
+        prevDefenderLmRef.current = defenderLm
+
+        // Draw overlays on canvas (U Strike, Hook, Usi, Sweep, Bavalai, Gap, Echo, Trap, Defence, Retreat, Slide, Zip)
         const ctx = canvas.getContext('2d')
         if (ctx) {
           const W = canvas.width; const H = canvas.height
@@ -893,6 +1073,13 @@ export default function VideoAnalyzer() {
           drawUsiOverlay(ctx, W, H, attackerLm, defenderLm, usiOpp, usiHistoryRef.current[0])
           drawSweepOverlay(ctx, W, H, attackerLm, defenderLm, sweepOpp, sweepHistoryRef.current[0])
           drawBavalaiOverlay(ctx, W, H, attackerLm, bavalaiSt, bavalaiHistoryRef.current[0])
+          drawGapOverlay(ctx, W, H, defenderLm, gapSt)
+          drawEchoOverlay(ctx, W, H, attackerLm, defenderLm, echoOpp)
+          drawTrapOverlay(ctx, W, H, attackerLm, defenderLm, trapOpp)
+          drawDefenceOverlay(ctx, W, H, attackerLm, defenceOpp)
+          drawRetreatOverlay(ctx, W, H, attackerLm, retreatSt)
+          drawSlideOverlay(ctx, W, H, attackerLm, defenderLm, slideHistoryRef.current[0], slideOpp)
+          drawZipOverlay(ctx, W, H, attackerLm, defenderLm, zipHistoryRef.current[0], zipOpp)
         }
 
         // Attempt analyses
@@ -900,6 +1087,11 @@ export default function VideoAnalyzer() {
         const hookAttempt    = analyzeHookAttempt(attackerLm, defenderLm, hookHistoryRef.current[0], hookOpp)
         const usiAttempt     = analyzeUsiAttempt(attackerLm, defenderLm, usiHistoryRef.current[0], usiOpp)
         const sweepAttempt   = analyzeSweepAttempt(attackerLm, defenderLm, sweepHistoryRef.current[0], sweepOpp)
+        const echoAttempt    = analyzeEchoAttempt(attackerLm, defenderLm, prevLandmarksRef.current[0] || null, echoOpp)
+        const trapAttempt    = analyzeTrapAttempt(attackerLm, defenderLm, prevLandmarksRef.current[0] || null, trapHistoryRef.current[0], trapOpp)
+        const defenceAttempt = analyzeDefenceAttempt(attackerLm, defenderLm, prevLandmarksRef.current[0] || null, defenceOpp, bavalaiSt.detected)
+        const slideAttempt   = analyzeSlideAttempt(attackerLm, defenderLm, prevLandmarksRef.current[0] || null, slideHistoryRef.current[0], slideOpp)
+        const zipAttempt     = analyzeZipAttempt(attackerLm, defenderLm, prevLandmarksRef.current[0] || null, zipHistoryRef.current[0], zipOpp)
 
         const snapshot = captureSnapshot(video, canvas)
         const timeSec = video.currentTime
@@ -914,6 +1106,18 @@ export default function VideoAnalyzer() {
           sweepOpportunity: sweepOpp,
           sweepAttempt: sweepAttempt.detected ? sweepAttempt : undefined,
           bavalaiState: bavalaiSt.detected ? bavalaiSt : undefined,
+          gapState: gapSt.detected ? gapSt : undefined,
+          echoOpportunity: echoOpp.opponentAttackDetected ? echoOpp : undefined,
+          echoAttempt: echoAttempt.detected ? echoAttempt : undefined,
+          trapOpportunity: trapOpp.available ? trapOpp : undefined,
+          trapAttempt: trapAttempt.detected ? trapAttempt : undefined,
+          defenceOpportunity: defenceOpp.threatDetected ? defenceOpp : undefined,
+          defenceAttempt: defenceAttempt.detected ? defenceAttempt : undefined,
+          retreatState: retreatSt.retreating ? retreatSt : undefined,
+          slideOpportunity: slideOpp.available ? slideOpp : undefined,
+          slideAttempt: slideAttempt.detected ? slideAttempt : undefined,
+          zipOpportunity: zipOpp.available ? zipOpp : undefined,
+          zipAttempt: zipAttempt.detected ? zipAttempt : undefined,
         }
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
@@ -1038,6 +1242,29 @@ export default function VideoAnalyzer() {
           const camBavalaiSt = analyzeBavalaiState(camAtk, camDef, bavalaiHistoryRef.current[0])
           setLiveBavalai(camBavalaiSt)
 
+          // Gap, Echo, Trap, Defence, Retreat, Slide, Zip for camera
+          const camGapSt = detectGap(camAtk, camDef)
+          setLiveGap(camGapSt)
+          const camEchoOpp = detectEchoOpportunity(camAtk, camDef, prevDefenderLmRef.current)
+          setLiveEcho(camEchoOpp)
+          const camTrapOpp = detectTrapOpportunity(camAtk, camDef)
+          setLiveTrap(camTrapOpp)
+          const camDefenceOpp = detectDefenceOpportunity(camAtk, camDef, prevDefenderLmRef.current, camBavalaiActive)
+          setLiveDefence(camDefenceOpp)
+          const camRetSt = detectRetreat(camAtk, prevLandmarksRef.current[0] || null, camDef, wristSpeedHistoryRef.current, camBavalaiActive)
+          setLiveRetreat(camRetSt)
+          const camSlideOpp = detectSlideOpportunity(camAtk, camDef)
+          setLiveSlide(camSlideOpp)
+          const camZipOpp = detectZipOpportunity(camAtk, camDef)
+          setLiveZip(camZipOpp)
+          const camTip = camAtk[16] ? { x: camAtk[16].x, y: camAtk[16].y, ts: camNow } : null
+          if (camTip) {
+            trapHistoryRef.current[0] = [...trapHistoryRef.current[0].slice(-29), camTip]
+            slideHistoryRef.current[0] = [...slideHistoryRef.current[0].slice(-29), camTip]
+            zipHistoryRef.current[0] = [...zipHistoryRef.current[0].slice(-29), camTip]
+          }
+          prevDefenderLmRef.current = camDef
+
           const ctx = canvas.getContext('2d')
           if (ctx) {
             const cW = canvas.width; const cH = canvas.height
@@ -1046,6 +1273,13 @@ export default function VideoAnalyzer() {
             drawUsiOverlay(ctx, cW, cH, camAtk, camDef, camUsiOpp, usiHistoryRef.current[0])
             drawSweepOverlay(ctx, cW, cH, camAtk, camDef, camSweepOpp, sweepHistoryRef.current[0])
             drawBavalaiOverlay(ctx, cW, cH, camAtk, camBavalaiSt, bavalaiHistoryRef.current[0])
+            drawGapOverlay(ctx, cW, cH, camDef, camGapSt)
+            drawEchoOverlay(ctx, cW, cH, camAtk, camDef, camEchoOpp)
+            drawTrapOverlay(ctx, cW, cH, camAtk, camDef, camTrapOpp)
+            drawDefenceOverlay(ctx, cW, cH, camAtk, camDefenceOpp)
+            drawRetreatOverlay(ctx, cW, cH, camAtk, camRetSt)
+            drawSlideOverlay(ctx, cW, cH, camAtk, camDef, slideHistoryRef.current[0], camSlideOpp)
+            drawZipOverlay(ctx, cW, cH, camAtk, camDef, zipHistoryRef.current[0], camZipOpp)
           }
         }
       }, 300)
@@ -1422,6 +1656,106 @@ export default function VideoAnalyzer() {
                           color: liveSweep.counterRisk === 'LOW' ? '#00ff88' : liveSweep.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
                         }}>{liveSweep.counterRisk}</span>
                       </p>
+                    </div>
+                  )}
+
+                  {/* Gap live banner */}
+                  {liveGap?.detected && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveGap.overlayColor}10`, borderColor: `${liveGap.overlayColor}50` }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveGap.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveGap.overlayColor }}>
+                          {liveGap.gapType === 'UPPER_GAP' ? '⬆ Upper Gap' : '⬇ Lower Gap'} — {liveGap.opponentStickPosition} Stick
+                        </p>
+                      </div>
+                      {liveGap.bestRecommendation && (
+                        <p className="text-xs font-semibold" style={{ color: liveGap.bestRecommendation.color }}>
+                          → {liveGap.bestRecommendation.technique}: {liveGap.bestRecommendation.reason}
+                        </p>
+                      )}
+                      <p className="text-slate-200 text-xs">{liveGap.suggestion}</p>
+                    </div>
+                  )}
+
+                  {/* Echo live banner */}
+                  {liveEcho?.opponentAttackDetected && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff10', borderColor: '#00d4ff50' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">⚡ Echo — Incoming Attack!</p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ background: liveEcho.counterRisk === 'LOW' ? '#00ff8820' : '#f9731620', color: liveEcho.counterRisk === 'LOW' ? '#00ff88' : '#f97316' }}>
+                          {liveEcho.counterRisk} risk
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveEcho.suggestion}</p>
+                      {liveEcho.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveEcho.warning}</p>}
+                      {liveEcho.secondEchoAvailable && <p className="text-cyan-400 text-[10px]">⚡⚡ Second Echo available</p>}
+                    </div>
+                  )}
+
+                  {/* Trap live banner */}
+                  {liveTrap?.available && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#a855f710', borderColor: '#a855f750' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse bg-purple-400" />
+                        <p className="text-xs font-bold uppercase tracking-widest text-purple-400">🎭 Trap Opening</p>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveTrap.suggestion}</p>
+                    </div>
+                  )}
+
+                  {/* Defence live banner */}
+                  {liveDefence?.threatDetected && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveDefence.overlayColor}10`, borderColor: `${liveDefence.overlayColor}50` }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-ping" style={{ background: liveDefence.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveDefence.overlayColor }}>
+                          {liveDefence.recommendedDefence === 'EMERGENCY_BLOCK' ? '🛡 Emergency Block' : '⟳ Active Bavalai Defence'}
+                        </p>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveDefence.suggestion}</p>
+                      {liveDefence.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveDefence.warning}</p>}
+                    </div>
+                  )}
+
+                  {/* Retreat live banner */}
+                  {liveRetreat?.retreating && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveRetreat.overlayColor}10`, borderColor: `${liveRetreat.overlayColor}50` }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ background: liveRetreat.overlayColor }} />
+                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveRetreat.overlayColor }}>
+                          Retreat — {liveRetreat.speed}
+                        </p>
+                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold" style={{
+                          background: liveRetreat.stickStatus === 'Active' ? '#00ff8820' : '#f9731620',
+                          color: liveRetreat.stickStatus === 'Active' ? '#00ff88' : '#f97316',
+                        }}>Stick {liveRetreat.stickStatus}</span>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveRetreat.coachingFeedback}</p>
+                    </div>
+                  )}
+
+                  {/* Slide live banner */}
+                  {liveSlide?.available && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff08', borderColor: '#00d4ff40' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse bg-cyan-400" />
+                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">〜 Slide Opportunity</p>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveSlide.suggestion}</p>
+                    </div>
+                  )}
+
+                  {/* Zip live banner */}
+                  {liveZip?.available && (
+                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff08', borderColor: '#00d4ff40' }}>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full animate-pulse bg-cyan-400" />
+                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">
+                          ⚡⚡ {liveZip.zipType === 'NORMAL_ZIP' ? 'Normal' : 'Reverse'} Zip
+                        </p>
+                      </div>
+                      <p className="text-slate-200 text-xs">{liveZip.suggestion}</p>
                     </div>
                   )}
 
@@ -2117,6 +2451,193 @@ export default function VideoAnalyzer() {
                               disabled={loadingSweep === rec.id}
                               className="w-full py-2.5 rounded-xl border border-green-400/30 text-green-400 text-xs font-bold hover:bg-green-400/10 transition-all disabled:opacity-50">
                               {loadingSweep === rec.id ? '⚙ ORION analysing Sweep...' : '🟢 Get Sweep Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Gap record panel */}
+                      {rec.gapState && (
+                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.gapState.overlayColor}40`, background: `${rec.gapState.overlayColor}08` }}>
+                          <p className="text-xs font-bold" style={{ color: rec.gapState.overlayColor }}>
+                            {rec.gapState.gapType === 'UPPER_GAP' ? '⬆ Upper Gap' : '⬇ Lower Gap'} — Stick {rec.gapState.opponentStickPosition}
+                          </p>
+                          {rec.gapState.bestRecommendation && (
+                            <p className="text-xs" style={{ color: rec.gapState.bestRecommendation.color }}>
+                              → {rec.gapState.bestRecommendation.technique}: {rec.gapState.bestRecommendation.reason}
+                            </p>
+                          )}
+                          <p className="text-slate-400 text-[10px]">{rec.gapState.suggestion}</p>
+                        </div>
+                      )}
+
+                      {/* Echo record panel */}
+                      {rec.echoOpportunity && (
+                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
+                          <p className="text-xs font-bold text-cyan-400">⚡ Echo — {rec.echoAttempt?.finalResult || 'Opportunity Detected'}</p>
+                          {rec.echoAttempt && (
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              <span className="text-slate-400">Intercept: <span className="text-white font-semibold">{rec.echoAttempt.interceptResult}</span></span>
+                              <span className="text-slate-400">Counter: <span className="text-white font-semibold">{rec.echoAttempt.counterResult}</span></span>
+                              <span className="text-slate-400">Footwork: <span className="text-white font-semibold">{rec.echoAttempt.footwork}</span></span>
+                              <span className="text-slate-400">Timing: <span className="text-white font-semibold">{rec.echoAttempt.timing}</span></span>
+                            </div>
+                          )}
+                          {rec.echoAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.echoAttempt.coachingFeedback}</p>}
+                          {rec.echoDeepAnalysis ? (
+                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
+                              <p className="text-xs font-bold text-cyan-400">🤖 Echo Deep Analysis <span className="ml-auto">{rec.echoDeepAnalysis.overallScore}/100</span></p>
+                              {rec.echoDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.echoDeepAnalysis.technicalBreakdown}</p>}
+                              {rec.echoDeepAnalysis.interceptAnalysis && <p className="text-slate-400 text-[10px]">Intercept: {rec.echoDeepAnalysis.interceptAnalysis}</p>}
+                              {rec.echoDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
+                            </div>
+                          ) : (
+                            <button onClick={() => getEchoDeepAnalysis(rec)} disabled={loadingEcho === rec.id}
+                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
+                              {loadingEcho === rec.id ? '⚙ Analysing Echo...' : '⚡ Get Echo Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Trap record panel */}
+                      {rec.trapOpportunity && (
+                        <div className="rounded-xl border border-purple-400/30 bg-purple-400/5 p-3 space-y-1.5">
+                          <p className="text-xs font-bold text-purple-400">🎭 Trap — {rec.trapAttempt?.finalResult || 'Opportunity Detected'}</p>
+                          {rec.trapAttempt && (
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              <span className="text-slate-400">Fake→Real: <span className="text-white font-semibold">{rec.trapAttempt.fakeTarget} → {rec.trapAttempt.realTarget}</span></span>
+                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.trapAttempt.transitionSpeed}</span></span>
+                              <span className="text-slate-400">Touch: <span className="text-white font-semibold">{rec.trapAttempt.touchResult}</span></span>
+                              <span className="text-slate-400">Defender reacted: <span className="text-white font-semibold">{rec.trapAttempt.defenderReacted ? 'Yes' : 'No'}</span></span>
+                            </div>
+                          )}
+                          {rec.trapAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.trapAttempt.coachingFeedback}</p>}
+                          {rec.trapDeepAnalysis ? (
+                            <div className="rounded-lg border border-purple-400/20 bg-purple-400/5 p-2 space-y-1">
+                              <p className="text-xs font-bold text-purple-400">🤖 Trap Deep Analysis <span className="ml-2">{rec.trapDeepAnalysis.overallScore}/100</span></p>
+                              {rec.trapDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.trapDeepAnalysis.technicalBreakdown}</p>}
+                              {rec.trapDeepAnalysis.deceptionAssessment && <p className="text-slate-400 text-[10px]">Deception: {rec.trapDeepAnalysis.deceptionAssessment}</p>}
+                              {rec.trapDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
+                            </div>
+                          ) : (
+                            <button onClick={() => getTrapDeepAnalysis(rec)} disabled={loadingTrap === rec.id}
+                              className="w-full py-2 rounded-xl border border-purple-400/30 text-purple-400 text-xs font-bold hover:bg-purple-400/10 transition-all disabled:opacity-50">
+                              {loadingTrap === rec.id ? '⚙ Analysing Trap...' : '🎭 Get Trap Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Defence record panel */}
+                      {rec.defenceOpportunity && (
+                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.defenceOpportunity.overlayColor}40`, background: `${rec.defenceOpportunity.overlayColor}08` }}>
+                          <p className="text-xs font-bold" style={{ color: rec.defenceOpportunity.overlayColor }}>
+                            {rec.defenceOpportunity.recommendedDefence === 'EMERGENCY_BLOCK' ? '🛡 Emergency Block' : '⟳ Active Bavalai Defence'}
+                            {rec.defenceAttempt ? ` — ${rec.defenceAttempt.result}` : ''}
+                          </p>
+                          {rec.defenceAttempt && (
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              <span className="text-slate-400">Stick active: <span className="text-white font-semibold">{rec.defenceAttempt.stickActive ? 'Yes' : 'No'}</span></span>
+                              <span className="text-slate-400">Body line: <span className="text-white font-semibold">{rec.defenceAttempt.bodyLineCovered ? 'Covered' : 'Exposed'}</span></span>
+                              <span className="text-slate-400">Block contact: <span className="text-white font-semibold">{rec.defenceAttempt.blockContact ? 'Yes' : 'No'}</span></span>
+                              <span className="text-slate-400">Bavalai: <span className="text-white font-semibold">{rec.defenceAttempt.bavalaiMaintained ? 'Maintained' : 'Lost'}</span></span>
+                            </div>
+                          )}
+                          {rec.defenceAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.defenceAttempt.coachingFeedback}</p>}
+                          {rec.defenceDeepAnalysis ? (
+                            <div className="rounded-lg border p-2 space-y-1" style={{ borderColor: `${rec.defenceOpportunity.overlayColor}20`, background: `${rec.defenceOpportunity.overlayColor}05` }}>
+                              <p className="text-xs font-bold" style={{ color: rec.defenceOpportunity.overlayColor }}>🤖 Defence Deep Analysis <span className="ml-2">{rec.defenceDeepAnalysis.overallScore}/100</span></p>
+                              {rec.defenceDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.defenceDeepAnalysis.technicalBreakdown}</p>}
+                              {rec.defenceDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
+                            </div>
+                          ) : (
+                            <button onClick={() => getDefenceDeepAnalysis(rec)} disabled={loadingDefence === rec.id}
+                              className="w-full py-2 rounded-xl border text-xs font-bold hover:opacity-80 transition-all disabled:opacity-50"
+                              style={{ borderColor: `${rec.defenceOpportunity.overlayColor}40`, color: rec.defenceOpportunity.overlayColor }}>
+                              {loadingDefence === rec.id ? '⚙ Analysing Defence...' : '🛡 Get Defence Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Retreat record panel */}
+                      {rec.retreatState && (
+                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.retreatState.overlayColor}40`, background: `${rec.retreatState.overlayColor}08` }}>
+                          <p className="text-xs font-bold" style={{ color: rec.retreatState.overlayColor }}>
+                            ↩ Retreat — {rec.retreatState.result}
+                          </p>
+                          <div className="grid grid-cols-2 gap-1 text-[10px]">
+                            <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.retreatState.speed}</span></span>
+                            <span className="text-slate-400">Stick: <span className="text-white font-semibold">{rec.retreatState.stickStatus}</span></span>
+                            <span className="text-slate-400">Balance: <span className="text-white font-semibold">{rec.retreatState.balance}</span></span>
+                            <span className="text-slate-400">To Bavalai: <span className="text-white font-semibold">{rec.retreatState.returnedToBavalai ? 'Yes' : 'No'}</span></span>
+                          </div>
+                          {rec.retreatState.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.retreatState.coachingFeedback}</p>}
+                        </div>
+                      )}
+
+                      {/* Slide record panel */}
+                      {rec.slideOpportunity && (
+                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
+                          <p className="text-xs font-bold text-cyan-400">〜 Slide — {rec.slideAttempt?.finalResult || 'Opportunity Detected'}</p>
+                          {rec.slideAttempt && (
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              <span className="text-slate-400">Upper touch: <span className="text-white font-semibold">{rec.slideAttempt.upperTouchResult}</span></span>
+                              <span className="text-slate-400">Lower touch: <span className="text-white font-semibold">{rec.slideAttempt.lowerTouchResult}</span></span>
+                              <span className="text-slate-400">U path: <span className="text-white font-semibold">{rec.slideAttempt.uPathDetected ? 'Detected' : 'Missing'}</span></span>
+                              <span className="text-slate-400">Flow: <span className="text-white font-semibold">{rec.slideAttempt.continuousFlow ? 'Continuous' : 'Broken'}</span></span>
+                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.slideAttempt.slideSpeedRating}</span></span>
+                              <span className="text-slate-400">Phase: <span className="text-white font-semibold">{rec.slideAttempt.currentPhase}</span></span>
+                            </div>
+                          )}
+                          {rec.slideAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.slideAttempt.coachingFeedback}</p>}
+                          {rec.slideDeepAnalysis ? (
+                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
+                              <p className="text-xs font-bold text-cyan-400">🤖 Slide Deep Analysis <span className="ml-2">{rec.slideDeepAnalysis.overallScore}/100</span></p>
+                              {rec.slideDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.slideDeepAnalysis.technicalBreakdown}</p>}
+                              {rec.slideDeepAnalysis.flowAssessment && <p className="text-slate-400 text-[10px]">Flow: {rec.slideDeepAnalysis.flowAssessment}</p>}
+                              {rec.slideDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
+                            </div>
+                          ) : (
+                            <button onClick={() => getSlideDeepAnalysis(rec)} disabled={loadingSlide === rec.id}
+                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
+                              {loadingSlide === rec.id ? '⚙ Analysing Slide...' : '〜 Get Slide Deep Analysis'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Zip record panel */}
+                      {rec.zipOpportunity && (
+                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
+                          <p className="text-xs font-bold text-cyan-400">
+                            ⚡⚡ {rec.zipOpportunity.zipType === 'NORMAL_ZIP' ? 'Normal' : 'Reverse'} Zip — {rec.zipAttempt?.finalResult || 'Opportunity Detected'}
+                          </p>
+                          {rec.zipAttempt && (
+                            <div className="grid grid-cols-2 gap-1 text-[10px]">
+                              <span className="text-slate-400">1st touch: <span className="text-white font-semibold">{rec.zipAttempt.firstTouchResult}</span></span>
+                              <span className="text-slate-400">2nd touch: <span className="text-white font-semibold">{rec.zipAttempt.secondTouchResult}</span></span>
+                              <span className="text-slate-400">Path: <span className="text-white font-semibold">{rec.zipAttempt.pathStraightness}</span></span>
+                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.zipAttempt.speedRating}</span></span>
+                              <span className="text-slate-400">Hands together: <span className="text-white font-semibold">{rec.zipAttempt.handsTogethery ? 'Yes' : 'No'}</span></span>
+                              {rec.zipAttempt.timeBetweenTouches > 0 && (
+                                <span className="text-slate-400">Between touches: <span className="text-white font-semibold">{rec.zipAttempt.timeBetweenTouches}ms</span></span>
+                              )}
+                            </div>
+                          )}
+                          {rec.zipAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.zipAttempt.coachingFeedback}</p>}
+                          {rec.zipDeepAnalysis ? (
+                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
+                              <p className="text-xs font-bold text-cyan-400">🤖 Zip Deep Analysis <span className="ml-2">{rec.zipDeepAnalysis.overallScore}/100</span></p>
+                              {rec.zipDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.zipDeepAnalysis.technicalBreakdown}</p>}
+                              {rec.zipDeepAnalysis.speedAssessment && <p className="text-slate-400 text-[10px]">Speed: {rec.zipDeepAnalysis.speedAssessment}</p>}
+                              {rec.zipDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
+                            </div>
+                          ) : (
+                            <button onClick={() => getZipDeepAnalysis(rec)} disabled={loadingZip === rec.id}
+                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
+                              {loadingZip === rec.id ? '⚙ Analysing Zip...' : '⚡⚡ Get Zip Deep Analysis'}
                             </button>
                           )}
                         </div>
