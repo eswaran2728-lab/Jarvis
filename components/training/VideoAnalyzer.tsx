@@ -158,6 +158,7 @@ const CATEGORY_META: Record<HighlightCategory, { icon: string; label: string; co
 }
 
 const HL_KEY = 'orion_highlights'
+const COACH_COLORS = ['#ef4444', '#3b82f6', '#f97316', '#a855f7'] // P1=RED, P2=BLUE
 
 function loadHighlights(): HighlightClip[] {
   if (typeof window === 'undefined') return []
@@ -510,6 +511,11 @@ export default function VideoAnalyzer() {
   const [loadingDefence, setLoadingDefence] = useState<number | null>(null)
   const [loadingSlide, setLoadingSlide] = useState<number | null>(null)
   const [loadingZip, setLoadingZip]     = useState<number | null>(null)
+  const [coachingMoment, setCoachingMoment] = useState<any | null>(null)
+  const [coachingHistory, setCoachingHistory] = useState<{ timeSec: number; timeStr: string; moment: any }[]>([])
+  const [loadingCoaching, setLoadingCoaching] = useState(false)
+  const [isPausedByOrion, setIsPausedByOrion] = useState(false)
+  const [liveCameraCoach, setLiveCameraCoach] = useState<any | null>(null)
 
   // Recording
   const [isRecording, setIsRecording]     = useState(false)
@@ -542,6 +548,7 @@ export default function VideoAnalyzer() {
   const zipHistoryRef    = useRef<ZipPoint[][]>([[], [], [], []])
   const prevDefenderLmRef = useRef<any[] | null>(null)
   const wristSpeedHistoryRef = useRef<number[]>([])
+  const lastPauseTimeRef = useRef<number>(0)
 
   useEffect(() => {
     // Load highlight metadata from localStorage (clip URLs are blob: and expire)
@@ -575,7 +582,7 @@ export default function VideoAnalyzer() {
     const W = canvasEl.width; const H = canvasEl.height
 
     allLandmarks.forEach((landmarks, pIdx) => {
-      const color = PLAYER_COLORS[pIdx] || '#ffffff'
+      const color = COACH_COLORS[pIdx] || '#ffffff'
       ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.85
       POSE_CONNECTIONS.forEach(([a, b]) => {
         if (landmarks[a]?.visibility > 0.5 && landmarks[b]?.visibility > 0.5) {
@@ -644,7 +651,7 @@ export default function VideoAnalyzer() {
       attackSpeed: speed, power, powerScore: pScore, spinScore: spin, reflexScore: reflex,
       technique, estimatedHeight: h, estimatedWeight: w,
       remarks: motionM.remarks,
-      color: PLAYER_COLORS[pIdx] || '#ffffff',
+      color: COACH_COLORS[pIdx] || '#ffffff',
       label: PLAYER_LABELS[pIdx] || `Player ${pIdx + 1}`,
     }
   }, [])
@@ -853,6 +860,30 @@ export default function VideoAnalyzer() {
       setRecords(prev => prev.map(r => r.id === rec.id ? { ...r, zipDeepAnalysis: data } : r))
     } catch { /* silent */ }
     setLoadingZip(null)
+  }, [])
+
+  const fetchCoachingMoment = useCallback(async (params: {
+    videoTime: string; momentType: string; player1Tech: string; player2Tech: string;
+    gapType?: string; gapStickPos?: string; gapBestTech?: string;
+    echoDetected: boolean; echoDirection?: string;
+    trapAvailable: boolean; trapFakeTarget?: string; trapRealTarget?: string;
+    defenceThreat: boolean; defenceType?: string;
+    bavalaiQuality?: string; bavalaiOpportunity?: string;
+    retreatResult?: string; slideAvailable: boolean; zipAvailable: boolean;
+    wristSpeed?: number; player1Score?: number; player2Score?: number;
+  }) => {
+    setLoadingCoaching(true)
+    try {
+      const res = await fetch('/api/coaching-moment', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      })
+      const data = await res.json()
+      setCoachingMoment(data)
+      const timeSec = videoRef.current?.currentTime || 0
+      setCoachingHistory(prev => [{ timeSec, timeStr: params.videoTime, moment: data }, ...prev.slice(0, 49)])
+    } catch { /* silent */ }
+    setLoadingCoaching(false)
   }, [])
 
   // ─── Clip cutting ──────────────────────────────────────────────────────────
@@ -1119,9 +1150,46 @@ export default function VideoAnalyzer() {
           zipOpportunity: zipOpp.available ? zipOpp : undefined,
           zipAttempt: zipAttempt.detected ? zipAttempt : undefined,
         }
+        // Significance score — auto-pause if high enough and min 4s gap
+        let sigScore = 0
+        if (gapSt.detected && gapSt.counterRisk === 'LOW') sigScore = Math.max(sigScore, 0.80)
+        if (echoOpp.opponentAttackDetected) sigScore = Math.max(sigScore, 0.90)
+        if (trapOpp.available) sigScore = Math.max(sigScore, 0.75)
+        if (retreatSt.retreating && retreatSt.stickStatus === 'Dropped') sigScore = Math.max(sigScore, 0.70)
+        if (bavalaiSt.detected && bavalaiSt.bestOpportunity) sigScore = Math.max(sigScore, 0.65)
+
+        const nowSec = video.currentTime
+        const sinceLastPause = nowSec - lastPauseTimeRef.current
+        if (sigScore >= 0.70 && sinceLastPause >= 4) {
+          lastPauseTimeRef.current = nowSec
+          video.pause(); setIsPlaying(false); setIsPausedByOrion(true); setCoachingMoment(null)
+          const momentType = echoOpp.opponentAttackDetected ? 'ECHO_COUNTER' : trapOpp.available ? 'TRAP_OPPORTUNITY' : gapSt.detected ? 'GAP_OPENING' : retreatSt.retreating ? 'RETREAT_MISTAKE' : 'BAVALAI_OPPORTUNITY'
+          fetchCoachingMoment({
+            videoTime: formatTime(nowSec), momentType,
+            player1Tech: rec.players[0]?.technique || 'Unknown',
+            player2Tech: rec.players[1]?.technique || 'Unknown',
+            gapType: gapSt.detected ? gapSt.gapType : undefined,
+            gapStickPos: gapSt.detected ? gapSt.opponentStickPosition : undefined,
+            gapBestTech: gapSt.detected ? (gapSt.bestRecommendation?.technique) : undefined,
+            echoDetected: echoOpp.opponentAttackDetected,
+            echoDirection: echoOpp.attackDirection,
+            trapAvailable: trapOpp.available,
+            trapFakeTarget: trapOpp.suggestedFakeTarget,
+            trapRealTarget: trapOpp.suggestedRealTarget,
+            defenceThreat: defenceOpp.threatDetected,
+            defenceType: defenceOpp.recommendedDefence,
+            bavalaiQuality: bavalaiSt.detected ? bavalaiSt.quality : undefined,
+            bavalaiOpportunity: bavalaiSt.bestOpportunity?.technique || undefined,
+            retreatResult: retreatSt.retreating ? retreatSt.speed : undefined,
+            slideAvailable: slideOpp.available,
+            zipAvailable: zipOpp.available,
+            wristSpeed: wristSpeedHistoryRef.current[wristSpeedHistoryRef.current.length - 1],
+          })
+        }
+
         setRecords(prev => [rec, ...prev])
         setExpandedId(rec.id)
-        if (withAdvice) getCombatAdvice(rec)
+        if (withAdvice && !isPausedByOrion) getCombatAdvice(rec)
         analyseClipProscons(rec)
         setSuggestions(getSuggestedClips(allLandmarks.map((_: any, i: number) => {
           try { return detectTechnique(allLandmarks[i]) } catch { return '' }
@@ -1265,6 +1333,28 @@ export default function VideoAnalyzer() {
           }
           prevDefenderLmRef.current = camDef
 
+          // Live camera: compute significance and show real-time coaching card
+          let camSig = 0
+          if (camGapSt.detected && camGapSt.counterRisk === 'LOW') camSig = Math.max(camSig, 0.80)
+          if (camEchoOpp.opponentAttackDetected) camSig = Math.max(camSig, 0.90)
+          if (camTrapOpp.available) camSig = Math.max(camSig, 0.75)
+          if (camRetSt.retreating && camRetSt.stickStatus === 'Dropped') camSig = Math.max(camSig, 0.70)
+          if (camBavalaiSt.detected && camBavalaiSt.bestOpportunity) camSig = Math.max(camSig, 0.65)
+          if (camSig >= 0.65) {
+            const camMomentType = camEchoOpp.opponentAttackDetected ? 'ECHO_COUNTER' : camTrapOpp.available ? 'TRAP_OPPORTUNITY' : camGapSt.detected ? 'GAP_OPENING' : camRetSt.retreating ? 'RETREAT_MISTAKE' : 'BAVALAI_OPPORTUNITY'
+            setLiveCameraCoach({
+              momentType: camMomentType,
+              gap: camGapSt.detected ? `Gap: ${camGapSt.gapType} — best: ${camGapSt.bestRecommendation?.technique || '?'}` : null,
+              echo: camEchoOpp.opponentAttackDetected ? `Echo from ${camEchoOpp.attackDirection}` : null,
+              trap: camTrapOpp.available ? `Trap: fake ${camTrapOpp.suggestedFakeTarget} → hit ${camTrapOpp.suggestedRealTarget}` : null,
+              retreat: camRetSt.retreating && camRetSt.stickStatus === 'Dropped' ? 'Keep stick active during retreat!' : null,
+              bavalai: camBavalaiSt.bestOpportunity ? `Bavalai chance: ${camBavalaiSt.bestOpportunity.technique}` : null,
+              confidence: Math.round(camSig * 100),
+            })
+          } else {
+            setLiveCameraCoach(null)
+          }
+
           const ctx = canvas.getContext('2d')
           if (ctx) {
             const cW = canvas.width; const cH = canvas.height
@@ -1350,23 +1440,33 @@ export default function VideoAnalyzer() {
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
+  const resumePlayback = () => {
+    setIsPausedByOrion(false)
+    videoRef.current?.play()
+    setIsPlaying(true)
+  }
+
+  const P1_COLOR = '#ef4444'
+  const P2_COLOR = '#3b82f6'
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <canvas ref={snapshotCanvasRef} className="hidden" />
 
-      {/* Global cutting / saved banner — visible on any tab */}
+      {/* Toasts */}
       {cuttingClip && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 border border-orion-blue/50 shadow-xl">
           <Scissors size={16} className="text-orion-blue animate-bounce flex-shrink-0" />
-          <span className="text-orion-blue text-sm font-bold">Cutting {CATEGORY_META[cuttingClip.category].label} clip… please wait</span>
+          <span className="text-orion-blue text-sm font-bold">Cutting {CATEGORY_META[cuttingClip.category].label} clip…</span>
         </div>
       )}
       {savedFlash && !cuttingClip && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 border border-green-400/50 shadow-xl">
-          <span className="text-green-400 text-sm font-bold">{savedFlash} → see Highlights tab 🎬</span>
+          <span className="text-green-400 text-sm font-bold">{savedFlash} saved</span>
         </div>
       )}
 
+      {/* Mode toggle */}
       {/* Mode toggle */}
       <div className="flex gap-2 p-1 bg-slate-800/60 rounded-2xl border border-slate-700">
         {(['video', 'camera'] as Mode[]).map(m => (
@@ -1381,7 +1481,7 @@ export default function VideoAnalyzer() {
       <div className="flex gap-1 p-1 bg-slate-800/40 rounded-xl border border-slate-700 overflow-x-auto scrollbar-hide">
         {([
           { id: 'analyze',    label: '⚡ Analyse' },
-          { id: 'records',    label: `📋 Records${records.length > 0 ? ` (${records.length})` : ''}` },
+          { id: 'records',    label: `🏛 Timeline${coachingHistory.length > 0 ? ` (${coachingHistory.length})` : ''}` },
           { id: 'highlights', label: `🎬 Highlights${highlights.length > 0 ? ` (${highlights.length})` : ''}` },
           { id: 'recordings', label: `🎥 Recorded${recordedVideos.length > 0 ? ` (${recordedVideos.length})` : ''}` },
         ] as { id: Tab; label: string }[]).map(t => (
@@ -1395,23 +1495,6 @@ export default function VideoAnalyzer() {
       {/* ─── ANALYSE TAB ─── */}
       {tab === 'analyze' && (
         <>
-          {suggestions.length > 0 && (
-            <div className="rounded-2xl border border-yellow-400/30 bg-yellow-400/5 p-3 space-y-2">
-              <div className="flex items-center gap-2 text-yellow-400 text-xs font-bold">
-                <Lightbulb size={13} /> ORION suggests reviewing these saved clips first:
-              </div>
-              {suggestions.map(s => (
-                <div key={s.id} className="flex items-center gap-2 rounded-xl bg-yellow-400/5 border border-yellow-400/15 p-2">
-                  {s.snapshot && <img src={s.snapshot} className="w-12 h-8 rounded-lg object-cover" alt="ref" />}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white text-xs font-semibold truncate">{s.title}</p>
-                    <p className="text-yellow-400/70 text-[10px]">{s.techniques.join(', ')}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
           {mode === 'video' && (
             <>
               {!videoSrc ? (
@@ -1423,7 +1506,15 @@ export default function VideoAnalyzer() {
                     <div className="flex flex-col items-center justify-center h-full py-12 px-6 text-center">
                       <Upload size={32} className="text-orion-blue mb-3" />
                       <p className="text-white font-bold text-lg mb-1">Upload Match Video</p>
-                      <p className="text-slate-400 text-sm">MP4 · MOV · WebM — cut highlights per match</p>
+                      <p className="text-slate-400 text-sm">MP4 · MOV · WebM</p>
+                      <div className="mt-4 flex gap-2">
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ background: P1_COLOR }} /> Red = Player 1
+                        </span>
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-full inline-block" style={{ background: P2_COLOR }} /> Blue = Player 2
+                        </span>
+                      </div>
                     </div>
                     <input ref={fileInputRef} type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden"
                       onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
@@ -1436,16 +1527,27 @@ export default function VideoAnalyzer() {
                 </div>
               ) : (
                 <>
+                  {/* ── Video area ── */}
                   <div className="relative rounded-2xl overflow-hidden bg-black border border-orion-border" style={{ aspectRatio: '16/9' }}>
                     <video ref={videoRef} src={videoSrc} className="w-full h-full object-contain"
                       onTimeUpdate={e => setCurrentTime(e.currentTarget.currentTime)}
                       onLoadedMetadata={e => setDuration(e.currentTarget.duration)}
                       onEnded={() => setIsPlaying(false)} />
-                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ mixBlendMode: 'screen' }} />
+
+                    {/* ORION pause overlay */}
+                    {isPausedByOrion && (
+                      <div className="absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/80 border border-[#ef4444]/60 rounded-xl px-3 py-1.5">
+                        <div className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse" />
+                        <span className="text-[#ef4444] text-xs font-bold tracking-widest">ORION PAUSED</span>
+                      </div>
+                    )}
+
+                    {/* Loading overlay */}
                     {(loadingModel || fullAnalysing) && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-3">
                         <p className="text-orion-blue text-sm font-medium animate-pulse">
-                          {fullAnalysing ? `Scanning all players... ${fullProgress}%` : 'Loading AI model...'}
+                          {fullAnalysing ? `Scanning... ${fullProgress}%` : 'Loading AI model…'}
                         </p>
                         {fullAnalysing && (
                           <div className="w-48 h-1.5 bg-slate-700 rounded-full">
@@ -1454,19 +1556,31 @@ export default function VideoAnalyzer() {
                         )}
                       </div>
                     )}
-{records.length > 0 && !cuttingClip && (
-                      <div className="absolute top-2 right-2 bg-orion-blue/90 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                        {records.length} captured
+
+                    {/* Player legend */}
+                    <div className="absolute bottom-2 left-2 flex gap-2">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${P1_COLOR}20`, color: P1_COLOR, border: `1px solid ${P1_COLOR}50` }}>Red P1</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${P2_COLOR}20`, color: P2_COLOR, border: `1px solid ${P2_COLOR}50` }}>Blue P2</span>
+                    </div>
+
+                    {/* Moments count badge */}
+                    {coachingHistory.length > 0 && (
+                      <div className="absolute top-2 right-2 bg-[#ef4444]/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        {coachingHistory.length} moments
                       </div>
                     )}
                   </div>
 
-                  <div className="glass rounded-2xl border border-orion-border p-4 space-y-3">
+                  {/* ── Video controls ── */}
+                  <div className="glass rounded-2xl border border-orion-border p-3 space-y-3">
                     <div className="flex items-center gap-2">
-                      <button onClick={() => { const v = videoRef.current; if (!v) return; v.currentTime = 0; v.pause(); setIsPlaying(false) }} className="p-2 text-slate-400 hover:text-white">
+                      <button onClick={() => { const v = videoRef.current; if (!v) return; v.currentTime = 0; v.pause(); setIsPlaying(false); setIsPausedByOrion(false) }} className="p-2 text-slate-400 hover:text-white">
                         <SkipBack size={16} />
                       </button>
-                      <button onClick={() => { const v = videoRef.current; if (!v) return; isPlaying ? v.pause() : v.play(); setIsPlaying(!isPlaying) }}
+                      <button onClick={() => {
+                        const v = videoRef.current; if (!v) return
+                        if (isPlaying) { v.pause(); setIsPlaying(false) } else { v.play(); setIsPlaying(true); setIsPausedByOrion(false) }
+                      }}
                         className="p-2 rounded-lg bg-orion-blue/20 border border-orion-blue/30 text-orion-blue">
                         {isPlaying ? <Pause size={18} /> : <Play size={18} />}
                       </button>
@@ -1475,322 +1589,162 @@ export default function VideoAnalyzer() {
                         onChange={e => { const v = parseFloat(e.target.value); if (videoRef.current) videoRef.current.currentTime = v; setCurrentTime(v) }}
                         className="flex-1 accent-[#00d4ff] cursor-pointer" />
                     </div>
-                    <button onClick={analyseFullVideo} disabled={isAnalysing || fullAnalysing || !!cuttingClip}
-                      className="w-full py-3 rounded-xl font-bold text-sm disabled:opacity-50 active:scale-95 transition-all"
-                      style={{ background: 'linear-gradient(135deg, #00d4ff22, #a855f722)', border: '1px solid #00d4ff55', color: '#00d4ff' }}>
-                      {fullAnalysing ? `⚡ Scanning... ${fullProgress}%` : '⚡ Scan Full Match — All Players'}
-                    </button>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => analyseFrame()} disabled={isAnalysing || fullAnalysing || !!cuttingClip}
-                        className="py-2.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-200 font-semibold text-sm disabled:opacity-50">
-                        {isAnalysing ? 'Analysing...' : '📸 Capture Frame'}
+                      <button onClick={analyseFullVideo} disabled={isAnalysing || fullAnalysing || !!cuttingClip}
+                        className="py-2.5 rounded-xl font-bold text-sm disabled:opacity-50 active:scale-95 transition-all"
+                        style={{ background: 'linear-gradient(135deg, #00d4ff22, #a855f722)', border: '1px solid #00d4ff55', color: '#00d4ff' }}>
+                        {fullAnalysing ? `Scanning… ${fullProgress}%` : '⚡ Scan Full Match'}
                       </button>
-                      <button onClick={() => setAutoAnalyse(v => !v)} disabled={fullAnalysing || !!cuttingClip}
-                        className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl border font-semibold text-sm ${autoAnalyse ? 'bg-yellow-400/20 border-yellow-400/30 text-yellow-400' : 'bg-slate-700 border-slate-600 text-slate-400'}`}>
-                        {autoAnalyse ? <Zap size={14} /> : <ZapOff size={14} />}
-                        {autoAnalyse ? 'Auto ON' : 'Auto OFF'}
+                      <button onClick={() => { setVideoSrc(null); setRecords([]); setCoachingHistory([]); setCoachingMoment(null); setIsPausedByOrion(false) }}
+                        className="py-2.5 rounded-xl border border-red-400/20 text-red-400/60 text-sm hover:text-red-400 transition-all">
+                        Remove Video
                       </button>
                     </div>
-                    <button onClick={() => { setVideoSrc(null); setRecords([]); setCombatAdvice(null); setSuggestions([]) }}
-                      className="w-full py-2 rounded-xl border border-red-400/20 text-red-400/60 text-xs hover:text-red-400 transition-all">
-                      Remove Video
-                    </button>
+                    {isPausedByOrion && (
+                      <button onClick={resumePlayback}
+                        className="w-full py-3 rounded-xl font-bold text-sm text-white active:scale-95 transition-all"
+                        style={{ background: 'linear-gradient(135deg, #ef444433, #f9731633)', border: '1px solid #ef444460' }}>
+                        ▶ Resume Playback
+                      </button>
+                    )}
                   </div>
 
-                  {/* Live U Strike suggestion banner */}
-                  {liveUStrike && liveUStrike.type !== 'NONE' && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
-                      background: `${liveUStrike.overlayColor}10`,
-                      borderColor: `${liveUStrike.overlayColor}50`,
-                    }}>
+                  {/* ── Coach panel (shows when ORION paused) ── */}
+                  {isPausedByOrion && (
+                    <div className="rounded-2xl border border-[#ef4444]/40 bg-[#ef4444]/5 p-4 space-y-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveUStrike.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveUStrike.overlayColor }}>
-                          {liveUStrike.available ? '🎯 U Strike Opening!' : '⚠️ U Strike Risk'}
-                        </p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                          style={{ background: `${liveUStrike.overlayColor}20`, color: liveUStrike.overlayColor }}>
-                          {liveUStrike.type.replace('_', ' ')}
-                        </span>
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#ef4444] animate-pulse" />
+                        <span className="text-[#ef4444] text-sm font-bold tracking-wide">ORION COACH — PAUSED AT {formatTime(currentTime)}</span>
                       </div>
-                      <p className="text-slate-200 text-xs leading-relaxed">{liveUStrike.suggestion}</p>
-                      {liveUStrike.openTargets.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {liveUStrike.openTargets.map(t => (
-                            <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
-                          ))}
+
+                      {loadingCoaching && (
+                        <div className="flex items-center gap-2 text-slate-400 text-xs animate-pulse">
+                          <div className="w-4 h-4 border-2 border-orion-blue border-t-transparent rounded-full animate-spin" />
+                          ORION is analysing this moment…
                         </div>
                       )}
-                      {liveUStrike.warning && (
-                        <p className="text-yellow-400 text-[10px]">⚠ {liveUStrike.warning}</p>
-                      )}
-                      <p className="text-slate-500 text-[10px]">
-                        Counter risk: <span className="font-bold" style={{
-                          color: liveUStrike.counterRisk === 'LOW' ? '#00ff88' : liveUStrike.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                        }}>{liveUStrike.counterRisk}</span>
-                      </p>
-                    </div>
-                  )}
 
-                  {/* Hook live suggestion banner */}
-                  {liveHook && liveHook.type !== 'NONE' && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
-                      background: `${liveHook.overlayColor}10`,
-                      borderColor: `${liveHook.overlayColor}50`,
-                    }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveHook.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveHook.overlayColor }}>
-                          {liveHook.available ? '🔵 Hook Opening!' : '⚠️ Hook Risk'}
-                        </p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                          style={{ background: `${liveHook.overlayColor}20`, color: liveHook.overlayColor }}>
-                          {liveHook.type.replace('_', ' ')}
-                        </span>
-                      </div>
-                      <p className="text-slate-200 text-xs leading-relaxed">{liveHook.suggestion}</p>
-                      {liveHook.openTargets.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {liveHook.openTargets.map(t => (
-                            <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
-                          ))}
-                        </div>
-                      )}
-                      {liveHook.pathTooWide && (
-                        <p className="text-yellow-400 text-[10px]">⚠ Hook path is too wide. Shorten the movement.</p>
-                      )}
-                      {liveHook.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveHook.warning}</p>}
-                      <p className="text-slate-500 text-[10px]">
-                        Counter risk: <span className="font-bold" style={{
-                          color: liveHook.counterRisk === 'LOW' ? '#00ff88' : liveHook.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                        }}>{liveHook.counterRisk}</span>
-                      </p>
-                    </div>
-                  )}
+                      {coachingMoment && !loadingCoaching && (
+                        <div className="space-y-4">
+                          {/* Pause reason */}
+                          <p className="text-white text-sm font-semibold leading-snug">{coachingMoment.pauseReason}</p>
 
-                  {/* Usi live suggestion banner */}
-                  {liveUsi && liveUsi.available && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
-                      background: `${liveUsi.overlayColor}10`,
-                      borderColor: `${liveUsi.overlayColor}50`,
-                    }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveUsi.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveUsi.overlayColor }}>
-                          💉 Usi Opportunity!
-                        </p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold bg-blue-400/20 text-orion-blue">
-                          Chest Open
-                        </span>
-                      </div>
-                      <p className="text-slate-200 text-xs leading-relaxed">{liveUsi.suggestion}</p>
-                      {liveUsi.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveUsi.warning}</p>}
-                      <p className="text-slate-500 text-[10px]">
-                        Counter risk: <span className="font-bold" style={{
-                          color: liveUsi.counterRisk === 'LOW' ? '#00ff88' : liveUsi.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                        }}>{liveUsi.counterRisk}</span>
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Bavalai opportunity engine banner */}
-                  {liveBavalai?.detected && (
-                    <div className="rounded-2xl border p-3 space-y-2" style={{
-                      background: `${liveBavalai.overlayColor}08`,
-                      borderColor: `${liveBavalai.overlayColor}40`,
-                    }}>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="w-2 h-2 rounded-full animate-spin" style={{ background: liveBavalai.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveBavalai.overlayColor }}>
-                          ⟳ Bavalai — {liveBavalai.quality}
-                        </p>
-                        <span className="text-[10px] px-2 py-0.5 rounded-full ml-auto" style={{ background: `${liveBavalai.overlayColor}20`, color: liveBavalai.overlayColor }}>
-                          {liveBavalai.rotationSpeed} · {liveBavalai.compactness}
-                        </span>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveBavalai.coachMessage}</p>
-                      {liveBavalai.bestOpportunity && (
-                        <div className="rounded-xl p-2 space-y-1" style={{ background: `${liveBavalai.bestOpportunity.color}15`, border: `1px solid ${liveBavalai.bestOpportunity.color}40` }}>
-                          <p className="text-xs font-bold" style={{ color: liveBavalai.bestOpportunity.color }}>
-                            ⚡ {liveBavalai.bestOpportunity.technique} — Attack Now
-                          </p>
-                          <p className="text-slate-300 text-[10px]">{liveBavalai.bestOpportunity.reason}</p>
-                        </div>
-                      )}
-                      {liveBavalai.opportunities.filter(o => o.available).length > 1 && (
-                        <div className="flex flex-wrap gap-1">
-                          {liveBavalai.opportunities.filter(o => o.available).map(o => (
-                            <span key={o.technique} className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                              style={{ background: `${o.color}20`, color: o.color }}>
-                              {o.technique}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Sweep live suggestion banner */}
-                  {liveSweep && liveSweep.available && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{
-                      background: `${liveSweep.overlayColor}10`,
-                      borderColor: `${liveSweep.overlayColor}50`,
-                    }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveSweep.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveSweep.overlayColor }}>
-                          🟢 Sweep Opportunity!
-                        </p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                          style={{ background: `${liveSweep.overlayColor}20`, color: liveSweep.overlayColor }}>
-                          {liveSweep.openTarget}
-                        </span>
-                      </div>
-                      <p className="text-slate-200 text-xs leading-relaxed">{liveSweep.suggestion}</p>
-                      {liveSweep.handsTogetherWarning && (
-                        <p className="text-yellow-400 text-[10px]">✋ Bring both hands together before striking.</p>
-                      )}
-                      {liveSweep.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveSweep.warning}</p>}
-                      <p className="text-slate-500 text-[10px]">
-                        Counter risk: <span className="font-bold" style={{
-                          color: liveSweep.counterRisk === 'LOW' ? '#00ff88' : liveSweep.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                        }}>{liveSweep.counterRisk}</span>
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Gap live banner */}
-                  {liveGap?.detected && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveGap.overlayColor}10`, borderColor: `${liveGap.overlayColor}50` }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse" style={{ background: liveGap.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveGap.overlayColor }}>
-                          {liveGap.gapType === 'UPPER_GAP' ? '⬆ Upper Gap' : '⬇ Lower Gap'} — {liveGap.opponentStickPosition} Stick
-                        </p>
-                      </div>
-                      {liveGap.bestRecommendation && (
-                        <p className="text-xs font-semibold" style={{ color: liveGap.bestRecommendation.color }}>
-                          → {liveGap.bestRecommendation.technique}: {liveGap.bestRecommendation.reason}
-                        </p>
-                      )}
-                      <p className="text-slate-200 text-xs">{liveGap.suggestion}</p>
-                    </div>
-                  )}
-
-                  {/* Echo live banner */}
-                  {liveEcho?.opponentAttackDetected && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff10', borderColor: '#00d4ff50' }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">⚡ Echo — Incoming Attack!</p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ background: liveEcho.counterRisk === 'LOW' ? '#00ff8820' : '#f9731620', color: liveEcho.counterRisk === 'LOW' ? '#00ff88' : '#f97316' }}>
-                          {liveEcho.counterRisk} risk
-                        </span>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveEcho.suggestion}</p>
-                      {liveEcho.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveEcho.warning}</p>}
-                      {liveEcho.secondEchoAvailable && <p className="text-cyan-400 text-[10px]">⚡⚡ Second Echo available</p>}
-                    </div>
-                  )}
-
-                  {/* Trap live banner */}
-                  {liveTrap?.available && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#a855f710', borderColor: '#a855f750' }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse bg-purple-400" />
-                        <p className="text-xs font-bold uppercase tracking-widest text-purple-400">🎭 Trap Opening</p>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveTrap.suggestion}</p>
-                    </div>
-                  )}
-
-                  {/* Defence live banner */}
-                  {liveDefence?.threatDetected && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveDefence.overlayColor}10`, borderColor: `${liveDefence.overlayColor}50` }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-ping" style={{ background: liveDefence.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveDefence.overlayColor }}>
-                          {liveDefence.recommendedDefence === 'EMERGENCY_BLOCK' ? '🛡 Emergency Block' : '⟳ Active Bavalai Defence'}
-                        </p>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveDefence.suggestion}</p>
-                      {liveDefence.warning && <p className="text-yellow-400 text-[10px]">⚠ {liveDefence.warning}</p>}
-                    </div>
-                  )}
-
-                  {/* Retreat live banner */}
-                  {liveRetreat?.retreating && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: `${liveRetreat.overlayColor}10`, borderColor: `${liveRetreat.overlayColor}50` }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full" style={{ background: liveRetreat.overlayColor }} />
-                        <p className="text-xs font-bold uppercase tracking-widest" style={{ color: liveRetreat.overlayColor }}>
-                          Retreat — {liveRetreat.speed}
-                        </p>
-                        <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold" style={{
-                          background: liveRetreat.stickStatus === 'Active' ? '#00ff8820' : '#f9731620',
-                          color: liveRetreat.stickStatus === 'Active' ? '#00ff88' : '#f97316',
-                        }}>Stick {liveRetreat.stickStatus}</span>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveRetreat.coachingFeedback}</p>
-                    </div>
-                  )}
-
-                  {/* Slide live banner */}
-                  {liveSlide?.available && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff08', borderColor: '#00d4ff40' }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse bg-cyan-400" />
-                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">〜 Slide Opportunity</p>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveSlide.suggestion}</p>
-                    </div>
-                  )}
-
-                  {/* Zip live banner */}
-                  {liveZip?.available && (
-                    <div className="rounded-2xl border p-3 space-y-1.5" style={{ background: '#00d4ff08', borderColor: '#00d4ff40' }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse bg-cyan-400" />
-                        <p className="text-xs font-bold uppercase tracking-widest text-cyan-400">
-                          ⚡⚡ {liveZip.zipType === 'NORMAL_ZIP' ? 'Normal' : 'Reverse'} Zip
-                        </p>
-                      </div>
-                      <p className="text-slate-200 text-xs">{liveZip.suggestion}</p>
-                    </div>
-                  )}
-
-                  {(loadingAdvice || combatAdvice) && (
-                    <div className="rounded-2xl border p-4 space-y-2" style={{ background: '#a855f708', borderColor: '#a855f730' }}>
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full animate-pulse bg-purple-400" />
-                        <p className="text-xs font-bold uppercase tracking-widest text-purple-400">ORION Combat Analysis</p>
-                      </div>
-                      {loadingAdvice
-                        ? <div className="flex items-center gap-2 text-slate-400 text-sm"><span className="animate-spin text-purple-400">⚙</span> Analysing...</div>
-                        : <div className="text-sm text-slate-200 whitespace-pre-line leading-relaxed">{combatAdvice}</div>
-                      }
-                    </div>
-                  )}
-
-                  {counterClips.length > 0 && (
-                    <div className="rounded-2xl border border-purple-400/30 bg-purple-400/5 p-3 space-y-2">
-                      <p className="text-purple-400 text-xs font-bold uppercase tracking-widest">📼 Relevant Saved Highlights</p>
-                      {counterClips.map(hl => {
-                        const m = CATEGORY_META[hl.category]
-                        return (
-                          <div key={hl.id} className="flex items-center gap-2 rounded-xl bg-slate-800/60 border border-slate-700 p-2">
-                            {hl.snapshot && <img src={hl.snapshot} className="w-14 h-9 rounded-lg object-cover flex-shrink-0 border border-slate-700" alt="clip" />}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-1.5 mb-0.5">
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${m.color}20`, color: m.color }}>{m.icon} {m.label}</span>
-                              </div>
-                              <p className="text-white text-[11px] font-semibold truncate">{hl.techniques.join(' vs ')}</p>
-                              <p className="text-slate-500 text-[10px] truncate">{hl.videoName} · {hl.videoTime}</p>
-                            </div>
+                          {/* Red & Blue fighters */}
+                          <div className="grid grid-cols-1 gap-3">
+                            {(['red', 'blue'] as const).map(side => {
+                              const data = coachingMoment[side]
+                              const color = side === 'red' ? P1_COLOR : P2_COLOR
+                              const label = side === 'red' ? 'Red (P1)' : 'Blue (P2)'
+                              if (!data) return null
+                              return (
+                                <div key={side} className="rounded-xl p-3 space-y-2" style={{ background: `${color}10`, border: `1px solid ${color}30` }}>
+                                  <p className="text-xs font-bold" style={{ color }}>{label}</p>
+                                  {data.mistakes?.length > 0 && (
+                                    <div className="space-y-1">
+                                      {data.mistakes.map((m: string, i: number) => (
+                                        <p key={i} className="text-xs text-red-300">✗ {m}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {data.fixes?.length > 0 && (
+                                    <div className="space-y-1">
+                                      {data.fixes.map((f: string, i: number) => (
+                                        <p key={i} className="text-xs text-yellow-300">→ {f}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {data.strengths?.length > 0 && (
+                                    <div className="space-y-1">
+                                      {data.strengths.map((s: string, i: number) => (
+                                        <p key={i} className="text-xs text-green-400">✓ {s}</p>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
                           </div>
-                        )
-                      })}
-                      <button onClick={() => setCounterClips([])} className="text-[10px] text-slate-600 hover:text-slate-400 w-full text-center">Dismiss</button>
+
+                          {/* Point Opportunity */}
+                          {coachingMoment.pointOpportunity && (
+                            <div className="rounded-xl p-3 space-y-1.5 bg-[#00d4ff]/5 border border-[#00d4ff]/30">
+                              <div className="flex items-center justify-between">
+                                <span className="text-orion-blue text-xs font-bold">POINT OPPORTUNITY</span>
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{
+                                  background: coachingMoment.pointOpportunity.scoringPossibility === 'HIGH' ? '#00ff8820' : coachingMoment.pointOpportunity.scoringPossibility === 'MEDIUM' ? '#f59e0b20' : '#ef444420',
+                                  color: coachingMoment.pointOpportunity.scoringPossibility === 'HIGH' ? '#00ff88' : coachingMoment.pointOpportunity.scoringPossibility === 'MEDIUM' ? '#f59e0b' : '#ef4444',
+                                }}>{coachingMoment.pointOpportunity.scoringPossibility}</span>
+                              </div>
+                              <p className="text-white text-xs font-semibold">Target: {coachingMoment.pointOpportunity.target}</p>
+                              <p className="text-slate-300 text-[11px]">{coachingMoment.pointOpportunity.reason}</p>
+                              <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Open for: {coachingMoment.pointOpportunity.openDuration}</span>
+                                <span>Best: <span className="text-orion-blue font-semibold">{coachingMoment.pointOpportunity.bestAction}</span></span>
+                                <span>Conf: {coachingMoment.pointOpportunity.confidence}%</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Counter Analysis */}
+                          {coachingMoment.counterAnalysis && (
+                            <div className="rounded-xl p-3 space-y-1.5 bg-purple-500/5 border border-purple-500/30">
+                              <span className="text-purple-400 text-xs font-bold">COUNTER ANALYSIS</span>
+                              <p className="text-slate-300 text-[11px]">Attack: {coachingMoment.counterAnalysis.attackAttempted}</p>
+                              <p className="text-slate-300 text-[11px]">Response: {coachingMoment.counterAnalysis.defenderResponse}</p>
+                              <p className="text-white text-xs font-semibold">Best counter: {coachingMoment.counterAnalysis.bestCounter}</p>
+                              <p className="text-slate-400 text-[10px]">{coachingMoment.counterAnalysis.counterReason} — {coachingMoment.counterAnalysis.confidence}% conf</p>
+                            </div>
+                          )}
+
+                          {/* Stick Speed */}
+                          {coachingMoment.stickSpeed && (
+                            <div className="rounded-xl p-3 space-y-1.5 bg-yellow-400/5 border border-yellow-400/20">
+                              <span className="text-yellow-400 text-xs font-bold">STICK SPEED</span>
+                              <div className="flex flex-wrap gap-3 text-[11px]">
+                                <span className="text-slate-300">Entry: <span className="text-white font-bold">{coachingMoment.stickSpeed.entryTimeSec}s</span></span>
+                                <span className="text-slate-300">Exit: <span className="text-white font-bold">{coachingMoment.stickSpeed.exitTimeSec}s</span></span>
+                                <span className="text-slate-300">Cycle: <span className="text-white font-bold">{coachingMoment.stickSpeed.totalCycleSec}s</span></span>
+                                <span className="font-semibold" style={{ color: coachingMoment.stickSpeed.speedRating === 'Fast' ? '#00ff88' : '#f59e0b' }}>{coachingMoment.stickSpeed.speedRating}</span>
+                                {coachingMoment.stickSpeed.fastEnoughToScore
+                                  ? <span className="text-green-400 text-[10px]">✓ Fast enough to score</span>
+                                  : <span className="text-red-400 text-[10px]">✗ Too slow — increase wrist speed</span>}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Skill Recommendations (≥80% only) */}
+                          {coachingMoment.skillRecommendations?.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-orion-blue text-xs font-bold">SKILL RECOMMENDATIONS</span>
+                              {coachingMoment.skillRecommendations
+                                .filter((s: any) => s.confidence >= 80)
+                                .map((s: any, i: number) => (
+                                  <div key={i} className="flex items-start gap-2 rounded-xl p-2.5 bg-orion-blue/5 border border-orion-blue/20">
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orion-blue/20 text-orion-blue flex-shrink-0">{s.confidence}%</span>
+                                    <div>
+                                      <p className="text-white text-xs font-semibold">{s.skill}</p>
+                                      <p className="text-slate-400 text-[10px]">{s.reason}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+
+                          {/* Positive notes */}
+                          {coachingMoment.positiveNotes?.length > 0 && (
+                            <div className="rounded-xl p-2.5 bg-green-400/5 border border-green-400/20">
+                              {coachingMoment.positiveNotes.map((n: string, i: number) => (
+                                <p key={i} className="text-green-400 text-xs">✓ {n}</p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Timeline note */}
+                          {coachingMoment.timelineNote && (
+                            <p className="text-slate-500 text-[10px] italic">{coachingMoment.timelineNote}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -1798,937 +1752,94 @@ export default function VideoAnalyzer() {
             </>
           )}
 
+          {/* ── Camera mode ── */}
           {mode === 'camera' && (
             <div className="space-y-3">
-              <div className="relative rounded-2xl overflow-hidden bg-black border border-orion-border" style={{ aspectRatio: '4/3' }}>
-                <video ref={cameraRef} className="w-full h-full object-cover" autoPlay playsInline muted />
-                <canvas ref={cameraCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
-                {!cameraOn && <div className="absolute inset-0 flex items-center justify-center bg-black/80"><p className="text-slate-500 text-sm">Camera not started</p></div>}
-                {isRecording && (
-                  <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/70 rounded-full px-3 py-1.5">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-                    <span className="text-red-400 text-xs font-bold">{formatDur(recordDuration)}</span>
-                  </div>
-                )}
-                {cameraOn && <button onClick={flipCamera} className="absolute top-3 right-3 p-2 rounded-full bg-black/60 border border-white/20 text-white"><FlipHorizontal size={18} /></button>}
-                {livePlayers.length > 0 && (
-                  <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 rounded-full px-3 py-1">
-                    <span className="text-white text-xs font-bold">{livePlayers.length} player{livePlayers.length > 1 ? 's' : ''}</span>
-                  </div>
-                )}
-                {livePlayers.length > 0 && (
-                  <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/90">
-                    <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
-                      {livePlayers.map((p, i) => (
-                        <div key={i} className="flex-shrink-0 rounded-xl p-2 bg-black/60 border min-w-[130px]" style={{ borderColor: `${p.color}40` }}>
-                          <p className="text-[10px] font-bold mb-1" style={{ color: p.color }}>{p.label}</p>
-                          <div className="space-y-0.5">
-                            {[
-                              { l: '🌀 Spin',   v: p.spinScore },
-                              { l: '💥 Power',  v: p.powerScore },
-                              { l: '⚡ Reflex', v: p.reflexScore },
-                              { l: '🏃 Speed',  v: speedScore10(p.attackSpeed) },
-                            ].map(({ l, v }) => (
-                              <div key={l}>
-                                <p className="text-[8px] text-slate-500 mb-0.5">{l}</p>
-                                <ScoreBar score={v} color={p.color} />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+              {!cameraOn ? (
+                <button onClick={() => startCamera()}
+                  className="w-full py-5 rounded-2xl bg-orion-blue/10 border border-orion-blue/30 text-orion-blue font-bold text-base flex items-center justify-center gap-3 active:scale-95 transition-all">
+                  <Camera size={22} /> Start Live Camera
+                </button>
+              ) : (
+                <>
+                  <div className="relative rounded-2xl overflow-hidden bg-black border border-orion-border" style={{ aspectRatio: '4/3' }}>
+                    <video ref={cameraRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+                    <canvas ref={cameraCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ mixBlendMode: 'screen' }} />
+                    {isRecording && (
+                      <div className="absolute top-2 left-2 flex items-center gap-1.5 bg-red-500/90 text-white text-[10px] font-bold px-2 py-1 rounded-full">
+                        <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        REC {formatDur(recordDuration)}
+                      </div>
+                    )}
+                    <div className="absolute bottom-2 left-2 flex gap-2">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${P1_COLOR}20`, color: P1_COLOR, border: `1px solid ${P1_COLOR}50` }}>Red P1</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${P2_COLOR}20`, color: P2_COLOR, border: `1px solid ${P2_COLOR}50` }}>Blue P2</span>
                     </div>
                   </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={cameraOn ? stopCamera : () => startCamera()}
-                  className={`py-3 rounded-xl font-bold text-sm ${cameraOn ? 'bg-red-400/20 border border-red-400/40 text-red-400' : 'bg-orion-blue text-white'}`}>
-                  {cameraOn ? '⏹ Stop' : '📷 Start Camera'}
-                </button>
-                <button onClick={flipCamera} disabled={!cameraOn}
-                  className="py-3 rounded-xl bg-slate-700 border border-slate-600 text-slate-200 font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2">
-                  <FlipHorizontal size={16} /> Flip
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={isRecording ? stopRecording : startRecording} disabled={!cameraOn}
-                  className={`py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-40 ${isRecording ? 'bg-red-500/20 border border-red-500/50 text-red-400' : 'bg-green-400/15 border border-green-400/30 text-green-400'}`}>
-                  {isRecording ? <><Square size={14} /> Stop Rec</> : <><Circle size={14} /> Record</>}
-                </button>
-                <button onClick={saveCameraRecord} disabled={!cameraOn || !livePlayers.length}
-                  className="py-3 rounded-xl bg-orion-blue/15 border border-orion-blue/30 text-orion-blue font-bold text-sm disabled:opacity-40">
-                  📸 Snapshot
-                </button>
-              </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button onClick={flipCamera} className="py-2.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-300 text-xs font-semibold flex items-center justify-center gap-1">
+                      <FlipHorizontal size={14} /> Flip
+                    </button>
+                    <button onClick={isRecording ? stopRecording : startRecording}
+                      className={`py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 ${isRecording ? 'bg-red-500/20 border border-red-500/40 text-red-400' : 'bg-slate-700 border border-slate-600 text-slate-300'}`}>
+                      {isRecording ? <><Square size={14} /> Stop</> : <><Circle size={14} /> Record</>}
+                    </button>
+                    <button onClick={stopCamera} className="py-2.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-400 text-xs font-semibold">
+                      Stop
+                    </button>
+                  </div>
+
+                  {/* Live coaching card */}
+                  {liveCameraCoach && (
+                    <div className="rounded-2xl border border-[#ef4444]/50 bg-[#ef4444]/5 p-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse" />
+                        <span className="text-[#ef4444] text-xs font-bold uppercase tracking-wide">ORION ALERT — {liveCameraCoach.momentType?.replace(/_/g, ' ')}</span>
+                        <span className="ml-auto text-[10px] text-slate-500">{liveCameraCoach.confidence}%</span>
+                      </div>
+                      {liveCameraCoach.gap && <p className="text-slate-200 text-xs">🎯 {liveCameraCoach.gap}</p>}
+                      {liveCameraCoach.echo && <p className="text-purple-300 text-xs">↩ {liveCameraCoach.echo}</p>}
+                      {liveCameraCoach.trap && <p className="text-orange-300 text-xs">🎭 {liveCameraCoach.trap}</p>}
+                      {liveCameraCoach.bavalai && <p className="text-yellow-300 text-xs">⚡ {liveCameraCoach.bavalai}</p>}
+                      {liveCameraCoach.retreat && <p className="text-red-400 text-xs font-semibold">⚠ {liveCameraCoach.retreat}</p>}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </>
       )}
 
-      {/* ─── RECORDS TAB ─── */}
+      {/* ─── TIMELINE TAB (coaching history) ─── */}
       {tab === 'records' && (
         <div className="space-y-3">
-          {records.length === 0 ? (
-            <div className="text-center py-12 text-slate-500 text-sm">No records yet.<br />Upload a match video and scan it.</div>
+          {coachingHistory.length === 0 ? (
+            <div className="rounded-2xl border border-slate-700 bg-slate-800/40 p-8 text-center">
+              <p className="text-slate-400 text-sm">No coaching moments yet.</p>
+              <p className="text-slate-500 text-xs mt-1">Play a match video — ORION will pause automatically when important moments occur.</p>
+            </div>
           ) : (
-            <>
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-slate-500">{records.length} captures · {records.reduce((s, r) => s + r.players.length, 0)} players detected</p>
-                <button onClick={() => setRecords([])} className="text-xs text-red-400/60 hover:text-red-400 flex items-center gap-1"><Trash2 size={12} /> Clear</button>
-              </div>
-
-              {records.map((rec, idx) => (
-                <div key={rec.id} className="glass rounded-2xl border border-orion-border overflow-hidden">
-                  <button className="w-full flex items-center gap-3 p-3.5 hover:bg-white/5 transition-colors"
-                    onClick={() => setExpandedId(expandedId === rec.id ? null : rec.id)}>
-                    {rec.snapshot
-                      ? <img src={rec.snapshot} alt="frame" className="w-14 h-10 rounded-lg object-cover border border-slate-700 flex-shrink-0" />
-                      : <div className="w-14 h-10 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0"><span className="text-slate-500 text-xs">#{records.length - idx}</span></div>
-                    }
-                    <div className="flex-1 text-left min-w-0">
-                      <p className="text-white text-sm font-semibold truncate">
-                        {rec.players.length}P · {rec.players.map(p => p.technique).join(' vs ')}
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
-                        {rec.players.map((p, i) => <span key={i} style={{ color: p.color }}>P{i + 1}:{p.metrics.overallScore}</span>)}
-                        {rec.videoTime !== 'Live' && <span>⏱ {rec.videoTime}</span>}
-                        {rec.pros && <span className="text-green-400">✓</span>}
-                        {rec.savedAsRef && <span className="text-yellow-400">🎬</span>}
-                      </div>
-                    </div>
-                    {expandedId === rec.id ? <ChevronUp size={16} className="text-slate-500 flex-shrink-0" /> : <ChevronDown size={16} className="text-slate-500 flex-shrink-0" />}
-                  </button>
-
-                  {expandedId === rec.id && (
-                    <div className="px-4 pb-4 space-y-4 border-t border-orion-border/40 pt-4">
-
-                      {/* Video clip ±3s */}
-                      {rec.videoSrc && rec.videoTimeSec !== undefined && (
-                        <div className="space-y-1.5">
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">📹 Clip Preview</p>
-                          <div className="relative rounded-xl overflow-hidden border border-orion-blue/30 bg-black">
-                            <video
-                              src={`${rec.videoSrc}#t=${Math.max(0, rec.videoTimeSec - 2)},${rec.videoTimeSec + 4}`}
-                              controls loop className="w-full" style={{ maxHeight: 200 }} />
-                            <div className="absolute top-2 left-2 bg-black/80 text-orion-blue text-[10px] font-bold px-2 py-0.5 rounded-full">
-                              ⏱ {rec.videoTime}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Skeleton snapshot */}
-                      {rec.snapshot && (
-                        <div className="space-y-1.5">
-                          <p className="text-xs text-slate-500 uppercase tracking-wide">🦴 Skeleton Frame</p>
-                          <img src={rec.snapshot} alt="frame" className="w-full rounded-xl border border-slate-700" />
-                          <a href={rec.snapshot} download={`orion_${rec.timestamp.replace(/:/g, '-')}.jpg`}
-                            className="flex items-center justify-center gap-2 py-2 rounded-xl border border-slate-700 text-slate-400 text-xs hover:text-white transition-all">
-                            <Download size={12} /> Download Frame
-                          </a>
-                        </div>
-                      )}
-
-                      {/* Pros / Cons */}
-                      {loadingAnalysis === rec.id ? (
-                        <div className="flex items-center gap-2 text-orion-blue text-xs animate-pulse py-2">
-                          <span className="animate-spin">⚙</span> ORION analysing clip...
-                        </div>
-                      ) : rec.pros ? (
-                        <div className="space-y-2">
-                          <div className="grid grid-cols-1 gap-2">
-                            <div className="rounded-xl bg-green-400/5 border border-green-400/20 p-3 space-y-1.5">
-                              <p className="text-green-400 text-xs font-bold">✅ Pros</p>
-                              {rec.pros.map((p, i) => <p key={i} className="text-slate-300 text-xs">• {p}</p>)}
-                            </div>
-                            <div className="rounded-xl bg-red-400/5 border border-red-400/20 p-3 space-y-1.5">
-                              <p className="text-red-400 text-xs font-bold">❌ Cons</p>
-                              {rec.cons?.map((c, i) => <p key={i} className="text-slate-300 text-xs">• {c}</p>)}
-                            </div>
-                          </div>
-                          {rec.coachTip && (
-                            <div className="rounded-xl bg-orion-blue/5 border border-orion-blue/20 p-3">
-                              <p className="text-orion-blue text-xs font-bold mb-1">🎓 Coach Tip</p>
-                              <p className="text-slate-300 text-xs">{rec.coachTip}</p>
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <button onClick={() => analyseClipProscons(rec)}
-                          className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all">
-                          ⚡ Get Pros &amp; Cons
-                        </button>
-                      )}
-
-                      {/* U Strike Analysis */}
-                      {rec.uStrikeOpportunity && (
-                        <div className="space-y-2">
-                          <div className="rounded-xl border p-3 space-y-2" style={{
-                            borderColor: `${rec.uStrikeOpportunity.overlayColor}40`,
-                            background: `${rec.uStrikeOpportunity.overlayColor}08`,
-                          }}>
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-bold" style={{ color: rec.uStrikeOpportunity.overlayColor }}>
-                                🌀 U Strike Detection
-                              </p>
-                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                style={{ background: `${rec.uStrikeOpportunity.overlayColor}20`, color: rec.uStrikeOpportunity.overlayColor }}>
-                                {rec.uStrikeOpportunity.type.replace(/_/g, ' ')}
-                              </span>
-                            </div>
-                            <p className="text-slate-300 text-xs">{rec.uStrikeOpportunity.reason}</p>
-                            {rec.uStrikeOpportunity.openTargets.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                <span className="text-[10px] text-slate-500">Open targets:</span>
-                                {rec.uStrikeOpportunity.openTargets.map(t => (
-                                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
-                                ))}
-                              </div>
-                            )}
-                            <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-slate-500">Counter risk:</span>
-                              <span className="font-bold" style={{
-                                color: rec.uStrikeOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.uStrikeOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                              }}>{rec.uStrikeOpportunity.counterRisk}</span>
-                            </div>
-                            {rec.uStrikeOpportunity.warning && (
-                              <p className="text-yellow-400 text-[10px]">⚠ {rec.uStrikeOpportunity.warning}</p>
-                            )}
-                          </div>
-
-                          {rec.uStrikeAttempt && (
-                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
-                              <p className="text-xs font-bold text-slate-300">🎯 Attempt Analysis</p>
-                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">1st Touch</p>
-                                  <p className="text-white font-bold">{rec.uStrikeAttempt.firstTouchTarget}</p>
-                                  <p style={{ color: rec.uStrikeAttempt.firstTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
-                                    {rec.uStrikeAttempt.firstTouchResult}
-                                  </p>
-                                </div>
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">2nd Touch</p>
-                                  <p className="text-white font-bold">{rec.uStrikeAttempt.secondTouchTarget}</p>
-                                  <p style={{ color: rec.uStrikeAttempt.secondTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
-                                    {rec.uStrikeAttempt.secondTouchResult}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between text-[10px]">
-                                <span className="text-slate-500">Speed: <span className="text-white">{rec.uStrikeAttempt.speedRating}</span></span>
-                                <span className="text-slate-500">Path: <span className="text-white">{rec.uStrikeAttempt.pathClarity}</span></span>
-                              </div>
-                              <div className="text-center py-1">
-                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
-                                  background: rec.uStrikeAttempt.finalResult === 'Successful U Strike' ? '#00ff8820' : rec.uStrikeAttempt.finalResult === 'Partial U Strike' ? '#f59e0b20' : '#f9731620',
-                                  color: rec.uStrikeAttempt.finalResult === 'Successful U Strike' ? '#00ff88' : rec.uStrikeAttempt.finalResult === 'Partial U Strike' ? '#f59e0b' : '#f97316',
-                                }}>{rec.uStrikeAttempt.finalResult}</span>
-                              </div>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.uStrikeAttempt.coachingFeedback}</p>
-                            </div>
-                          )}
-
-                          {rec.uStrikeDeepAnalysis ? (
-                            <div className="rounded-xl border border-orion-blue/20 bg-orion-blue/5 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <p className="text-xs font-bold text-orion-blue">🤖 ORION Deep Analysis</p>
-                                {rec.uStrikeDeepAnalysis.overallScore > 0 && (
-                                  <span className="ml-auto text-xs font-bold text-orion-blue">{rec.uStrikeDeepAnalysis.overallScore}/100</span>
-                                )}
-                              </div>
-                              {rec.uStrikeDeepAnalysis.technicalBreakdown && (
-                                <p className="text-slate-300 text-xs">{rec.uStrikeDeepAnalysis.technicalBreakdown}</p>
-                              )}
-                              {rec.uStrikeDeepAnalysis.keyStrengths?.length > 0 && (
-                                <div>
-                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
-                                  {rec.uStrikeDeepAnalysis.keyStrengths.map((s: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.uStrikeDeepAnalysis.criticalFixes?.length > 0 && (
-                                <div>
-                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
-                                  {rec.uStrikeDeepAnalysis.criticalFixes.map((f: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.uStrikeDeepAnalysis.improvementDrills?.length > 0 && (
-                                <div>
-                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
-                                  {rec.uStrikeDeepAnalysis.improvementDrills.map((d: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.uStrikeDeepAnalysis.nextTechniqueToTry && (
-                                <p className="text-orion-blue text-[10px]">Next: {rec.uStrikeDeepAnalysis.nextTechniqueToTry}</p>
-                              )}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => getUStrikeDeepAnalysis(rec)}
-                              disabled={loadingUStrike === rec.id}
-                              className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
-                              {loadingUStrike === rec.id ? '⚙ ORION analysing U Strike...' : '🌀 Get U Strike Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Hook Analysis */}
-                      {rec.hookOpportunity && rec.hookOpportunity.type !== 'NONE' && (
-                        <div className="space-y-2">
-                          <div className="rounded-xl border p-3 space-y-2" style={{
-                            borderColor: `${rec.hookOpportunity.overlayColor}40`,
-                            background: `${rec.hookOpportunity.overlayColor}08`,
-                          }}>
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-bold" style={{ color: rec.hookOpportunity.overlayColor }}>
-                                🔵 Hook Detection
-                              </p>
-                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                style={{ background: `${rec.hookOpportunity.overlayColor}20`, color: rec.hookOpportunity.overlayColor }}>
-                                {rec.hookOpportunity.type.replace('_', ' ')}
-                              </span>
-                            </div>
-                            <p className="text-slate-300 text-xs">{rec.hookOpportunity.reason}</p>
-                            {rec.hookOpportunity.openTargets.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                <span className="text-[10px] text-slate-500">Open targets:</span>
-                                {rec.hookOpportunity.openTargets.map(t => (
-                                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/10 text-white/70">{t}</span>
-                                ))}
-                              </div>
-                            )}
-                            {rec.hookOpportunity.pathTooWide && (
-                              <p className="text-yellow-400 text-[10px]">⚠ Hook path was too wide. Shorten the C-movement.</p>
-                            )}
-                            <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-slate-500">Counter risk:</span>
-                              <span className="font-bold" style={{
-                                color: rec.hookOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.hookOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                              }}>{rec.hookOpportunity.counterRisk}</span>
-                            </div>
-                          </div>
-
-                          {rec.hookAttempt && (
-                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
-                              <p className="text-xs font-bold text-slate-300">🔵 Hook Attempt</p>
-                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">1st Touch</p>
-                                  <p className="text-white font-bold">{rec.hookAttempt.firstTouchTarget}</p>
-                                  <p style={{ color: rec.hookAttempt.firstTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
-                                    {rec.hookAttempt.firstTouchResult}
-                                  </p>
-                                </div>
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">2nd Touch</p>
-                                  <p className="text-white font-bold">{rec.hookAttempt.secondTouchTarget}</p>
-                                  <p style={{ color: rec.hookAttempt.secondTouchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
-                                    {rec.hookAttempt.secondTouchResult}
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between text-[10px]">
-                                <span className="text-slate-500">Path: <span className="text-white">{rec.hookAttempt.pathCompactness}</span></span>
-                                <span className="text-slate-500">Flow: <span className={rec.hookAttempt.continuousFlow ? 'text-green-400' : 'text-red-400'}>{rec.hookAttempt.continuousFlow ? 'Continuous' : 'Broken'}</span></span>
-                              </div>
-                              <div className="text-center py-1">
-                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
-                                  background: rec.hookAttempt.finalResult.startsWith('Successful') ? '#00ff8820' : rec.hookAttempt.finalResult.startsWith('Partial') ? '#f59e0b20' : '#f9731620',
-                                  color: rec.hookAttempt.finalResult.startsWith('Successful') ? '#00ff88' : rec.hookAttempt.finalResult.startsWith('Partial') ? '#f59e0b' : '#f97316',
-                                }}>{rec.hookAttempt.finalResult}</span>
-                              </div>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.hookAttempt.coachingFeedback}</p>
-                            </div>
-                          )}
-
-                          {rec.hookDeepAnalysis ? (
-                            <div className="rounded-xl border border-blue-400/20 bg-blue-400/5 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <p className="text-xs font-bold text-blue-400">🤖 Hook Deep Analysis</p>
-                                {rec.hookDeepAnalysis.overallScore > 0 && (
-                                  <span className="ml-auto text-xs font-bold text-blue-400">{rec.hookDeepAnalysis.overallScore}/100</span>
-                                )}
-                              </div>
-                              {rec.hookDeepAnalysis.technicalBreakdown && (
-                                <p className="text-slate-300 text-xs">{rec.hookDeepAnalysis.technicalBreakdown}</p>
-                              )}
-                              {rec.hookDeepAnalysis.keyStrengths?.length > 0 && (
-                                <div>
-                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
-                                  {rec.hookDeepAnalysis.keyStrengths.map((s: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.hookDeepAnalysis.criticalFixes?.length > 0 && (
-                                <div>
-                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
-                                  {rec.hookDeepAnalysis.criticalFixes.map((f: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.hookDeepAnalysis.improvementDrills?.length > 0 && (
-                                <div>
-                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
-                                  {rec.hookDeepAnalysis.improvementDrills.map((d: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => getHookDeepAnalysis(rec)}
-                              disabled={loadingHook === rec.id}
-                              className="w-full py-2.5 rounded-xl border border-blue-400/30 text-blue-400 text-xs font-bold hover:bg-blue-400/10 transition-all disabled:opacity-50">
-                              {loadingHook === rec.id ? '⚙ ORION analysing Hook...' : '🔵 Get Hook Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Usi Analysis */}
-                      {rec.usiOpportunity && (
-                        <div className="space-y-2">
-                          <div className="rounded-xl border p-3 space-y-2" style={{
-                            borderColor: `${rec.usiOpportunity.overlayColor}40`,
-                            background: `${rec.usiOpportunity.overlayColor}08`,
-                          }}>
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-bold" style={{ color: rec.usiOpportunity.overlayColor }}>
-                                💉 Usi Detection
-                              </p>
-                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                style={{ background: rec.usiOpportunity.available ? '#00ff8820' : '#f9731620',
-                                  color: rec.usiOpportunity.available ? '#00ff88' : '#f97316' }}>
-                                {rec.usiOpportunity.available ? 'Chest Open' : 'Chest Guarded'}
-                              </span>
-                            </div>
-                            <p className="text-slate-300 text-xs">{rec.usiOpportunity.reason}</p>
-                            {rec.usiOpportunity.warning && (
-                              <p className="text-yellow-400 text-[10px]">⚠ {rec.usiOpportunity.warning}</p>
-                            )}
-                            <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-slate-500">Counter risk:</span>
-                              <span className="font-bold" style={{
-                                color: rec.usiOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.usiOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                              }}>{rec.usiOpportunity.counterRisk}</span>
-                            </div>
-                          </div>
-
-                          {rec.usiAttempt && (
-                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
-                              <p className="text-xs font-bold text-slate-300">💉 Usi Attempt</p>
-                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">Target</p>
-                                  <p className="text-white font-bold">{rec.usiAttempt.touchTarget}</p>
-                                  <p style={{ color: rec.usiAttempt.touchResult === 'Clean Touch' ? '#00ff88' : '#f59e0b' }}>
-                                    {rec.usiAttempt.touchResult}
-                                  </p>
-                                </div>
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">Recovery</p>
-                                  <p className="text-white font-bold">{rec.usiAttempt.recoverySpeed}</p>
-                                  <p className="text-slate-400">{rec.usiAttempt.speedRating}</p>
-                                </div>
-                              </div>
-                              <p className="text-slate-400 text-[10px]">Path: {rec.usiAttempt.stickPath}</p>
-                              <div className="text-center py-1">
-                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
-                                  background: rec.usiAttempt.finalResult === 'Successful Usi' ? '#00ff8820' : rec.usiAttempt.finalResult === 'Partial Usi' ? '#f59e0b20' : '#f9731620',
-                                  color: rec.usiAttempt.finalResult === 'Successful Usi' ? '#00ff88' : rec.usiAttempt.finalResult === 'Partial Usi' ? '#f59e0b' : '#f97316',
-                                }}>{rec.usiAttempt.finalResult}</span>
-                              </div>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.usiAttempt.coachingFeedback}</p>
-                            </div>
-                          )}
-
-                          {rec.usiDeepAnalysis ? (
-                            <div className="rounded-xl border border-orion-blue/20 bg-orion-blue/5 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <p className="text-xs font-bold text-orion-blue">🤖 Usi Deep Analysis</p>
-                                {rec.usiDeepAnalysis.overallScore > 0 && (
-                                  <span className="ml-auto text-xs font-bold text-orion-blue">{rec.usiDeepAnalysis.overallScore}/100</span>
-                                )}
-                              </div>
-                              {rec.usiDeepAnalysis.technicalBreakdown && (
-                                <p className="text-slate-300 text-xs">{rec.usiDeepAnalysis.technicalBreakdown}</p>
-                              )}
-                              {rec.usiDeepAnalysis.keyStrengths?.length > 0 && (
-                                <div>
-                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
-                                  {rec.usiDeepAnalysis.keyStrengths.map((s: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.usiDeepAnalysis.criticalFixes?.length > 0 && (
-                                <div>
-                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
-                                  {rec.usiDeepAnalysis.criticalFixes.map((f: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.usiDeepAnalysis.improvementDrills?.length > 0 && (
-                                <div>
-                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
-                                  {rec.usiDeepAnalysis.improvementDrills.map((d: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.usiDeepAnalysis.nextTechniqueToTry && (
-                                <p className="text-orion-blue text-[10px]">Next: {rec.usiDeepAnalysis.nextTechniqueToTry}</p>
-                              )}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => getUsiDeepAnalysis(rec)}
-                              disabled={loadingUsi === rec.id}
-                              className="w-full py-2.5 rounded-xl border border-orion-blue/30 text-orion-blue text-xs font-bold hover:bg-orion-blue/10 transition-all disabled:opacity-50">
-                              {loadingUsi === rec.id ? '⚙ ORION analysing Usi...' : '💉 Get Usi Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Bavalai State */}
-                      {rec.bavalaiState?.detected && (
-                        <div className="rounded-xl border p-3 space-y-2" style={{
-                          borderColor: `${rec.bavalaiState.overlayColor}40`,
-                          background: `${rec.bavalaiState.overlayColor}08`,
-                        }}>
-                          <div className="flex items-center gap-2">
-                            <p className="text-xs font-bold" style={{ color: rec.bavalaiState.overlayColor }}>
-                              ⟳ Bavalai Analysis
-                            </p>
-                            <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                              style={{ background: `${rec.bavalaiState.overlayColor}20`, color: rec.bavalaiState.overlayColor }}>
-                              {rec.bavalaiState.quality}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-                            {[
-                              { l: 'Rotations', v: rec.bavalaiState.rotationCount },
-                              { l: 'Speed',     v: rec.bavalaiState.rotationSpeed },
-                              { l: 'Rhythm',    v: `${rec.bavalaiState.rhythmScore}/100` },
-                            ].map(({ l, v }) => (
-                              <div key={l} className="bg-slate-900/60 rounded-lg p-2 text-center">
-                                <p className="text-slate-500 mb-0.5">{l}</p>
-                                <p className="text-white font-bold text-xs">{v}</p>
-                              </div>
-                            ))}
-                          </div>
-                          <p className="text-slate-300 text-xs">{rec.bavalaiState.coachMessage}</p>
-                          {rec.bavalaiState.opportunities.filter(o => o.available).length > 0 && (
-                            <div>
-                              <p className="text-[10px] text-slate-500 mb-1">Opportunities detected from Bavalai:</p>
-                              <div className="flex flex-wrap gap-1">
-                                {rec.bavalaiState.opportunities.filter(o => o.available).map(o => (
-                                  <span key={o.technique} className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                                    style={{ background: `${o.color}20`, color: o.color }}>
-                                    {o.technique}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Sweep Analysis */}
-                      {rec.sweepOpportunity && rec.sweepOpportunity.openTarget !== 'None' && (
-                        <div className="space-y-2">
-                          <div className="rounded-xl border p-3 space-y-2" style={{
-                            borderColor: `${rec.sweepOpportunity.overlayColor}40`,
-                            background: `${rec.sweepOpportunity.overlayColor}08`,
-                          }}>
-                            <div className="flex items-center gap-2">
-                              <p className="text-xs font-bold" style={{ color: rec.sweepOpportunity.overlayColor }}>
-                                🟢 Sweep Detection
-                              </p>
-                              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-bold"
-                                style={{ background: `${rec.sweepOpportunity.overlayColor}20`, color: rec.sweepOpportunity.overlayColor }}>
-                                {rec.sweepOpportunity.openTarget}
-                              </span>
-                            </div>
-                            <p className="text-slate-300 text-xs">{rec.sweepOpportunity.reason}</p>
-                            <div className="flex flex-wrap gap-2 text-[10px]">
-                              <span className="text-slate-500">Guard High: <span className={rec.sweepOpportunity.guardHigh ? 'text-green-400' : 'text-slate-400'}>{rec.sweepOpportunity.guardHigh ? 'Yes ✓' : 'No'}</span></span>
-                              <span className="text-slate-500">Bavalai: <span className={rec.sweepOpportunity.fromBavalai ? 'text-green-400' : 'text-slate-400'}>{rec.sweepOpportunity.fromBavalai ? 'Yes ✓' : 'Not detected'}</span></span>
-                            </div>
-                            {rec.sweepOpportunity.handsTogetherWarning && (
-                              <p className="text-yellow-400 text-[10px]">✋ Both hands must come together during strike.</p>
-                            )}
-                            <div className="flex items-center gap-2 text-[10px]">
-                              <span className="text-slate-500">Counter risk:</span>
-                              <span className="font-bold" style={{
-                                color: rec.sweepOpportunity.counterRisk === 'LOW' ? '#00ff88' : rec.sweepOpportunity.counterRisk === 'HIGH' ? '#f97316' : '#f59e0b'
-                              }}>{rec.sweepOpportunity.counterRisk}</span>
-                            </div>
-                          </div>
-
-                          {rec.sweepAttempt && (
-                            <div className="rounded-xl border border-slate-700 p-3 space-y-1.5 bg-slate-800/40">
-                              <p className="text-xs font-bold text-slate-300">🟢 Sweep Attempt</p>
-                              <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">Target</p>
-                                  <p className="text-white font-bold">{rec.sweepAttempt.target}</p>
-                                  <p style={{ color: rec.sweepAttempt.touchResult === 'Clean Touch' ? '#00ff88' : rec.sweepAttempt.touchResult === 'Invalid Foot Contact' ? '#f97316' : '#f59e0b' }}>
-                                    {rec.sweepAttempt.touchResult}
-                                  </p>
-                                </div>
-                                <div className="bg-slate-900/60 rounded-lg p-2">
-                                  <p className="text-slate-500 mb-0.5">Hands Together</p>
-                                  <p className={`font-bold ${rec.sweepAttempt.handsTogether ? 'text-green-400' : 'text-red-400'}`}>
-                                    {rec.sweepAttempt.handsTogether ? '✓ Yes' : '✗ No'}
-                                  </p>
-                                  <p className="text-slate-400">{rec.sweepAttempt.speedRating}</p>
-                                </div>
-                              </div>
-                              <p className="text-slate-400 text-[10px]">Path: {rec.sweepAttempt.stickPath} · Recovery: {rec.sweepAttempt.recovery}</p>
-                              <div className="text-center py-1">
-                                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{
-                                  background: rec.sweepAttempt.finalResult === 'Successful Sweep' ? '#00ff8820' : rec.sweepAttempt.finalResult === 'Invalid Sweep' ? '#f9731620' : rec.sweepAttempt.finalResult === 'Partial Sweep' ? '#f59e0b20' : '#f9731620',
-                                  color: rec.sweepAttempt.finalResult === 'Successful Sweep' ? '#00ff88' : rec.sweepAttempt.finalResult === 'Invalid Sweep' ? '#f97316' : rec.sweepAttempt.finalResult === 'Partial Sweep' ? '#f59e0b' : '#f97316',
-                                }}>{rec.sweepAttempt.finalResult}</span>
-                              </div>
-                              <p className="text-slate-400 text-[10px] leading-relaxed">{rec.sweepAttempt.coachingFeedback}</p>
-                            </div>
-                          )}
-
-                          {rec.sweepDeepAnalysis ? (
-                            <div className="rounded-xl border border-green-400/20 bg-green-400/5 p-3 space-y-2">
-                              <div className="flex items-center gap-2">
-                                <p className="text-xs font-bold text-green-400">🤖 Sweep Deep Analysis</p>
-                                {rec.sweepDeepAnalysis.overallScore > 0 && (
-                                  <span className="ml-auto text-xs font-bold text-green-400">{rec.sweepDeepAnalysis.overallScore}/100</span>
-                                )}
-                              </div>
-                              {rec.sweepDeepAnalysis.technicalBreakdown && (
-                                <p className="text-slate-300 text-xs">{rec.sweepDeepAnalysis.technicalBreakdown}</p>
-                              )}
-                              {rec.sweepDeepAnalysis.keyStrengths?.length > 0 && (
-                                <div>
-                                  <p className="text-green-400 text-[10px] font-bold mb-1">Strengths</p>
-                                  {rec.sweepDeepAnalysis.keyStrengths.map((s: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">✓ {s}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.sweepDeepAnalysis.criticalFixes?.length > 0 && (
-                                <div>
-                                  <p className="text-red-400 text-[10px] font-bold mb-1">Fix These</p>
-                                  {rec.sweepDeepAnalysis.criticalFixes.map((f: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">• {f}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {rec.sweepDeepAnalysis.improvementDrills?.length > 0 && (
-                                <div>
-                                  <p className="text-yellow-400 text-[10px] font-bold mb-1">Drills</p>
-                                  {rec.sweepDeepAnalysis.improvementDrills.map((d: string, i: number) => (
-                                    <p key={i} className="text-slate-300 text-[10px]">{i + 1}. {d}</p>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => getSweepDeepAnalysis(rec)}
-                              disabled={loadingSweep === rec.id}
-                              className="w-full py-2.5 rounded-xl border border-green-400/30 text-green-400 text-xs font-bold hover:bg-green-400/10 transition-all disabled:opacity-50">
-                              {loadingSweep === rec.id ? '⚙ ORION analysing Sweep...' : '🟢 Get Sweep Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Gap record panel */}
-                      {rec.gapState && (
-                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.gapState.overlayColor}40`, background: `${rec.gapState.overlayColor}08` }}>
-                          <p className="text-xs font-bold" style={{ color: rec.gapState.overlayColor }}>
-                            {rec.gapState.gapType === 'UPPER_GAP' ? '⬆ Upper Gap' : '⬇ Lower Gap'} — Stick {rec.gapState.opponentStickPosition}
-                          </p>
-                          {rec.gapState.bestRecommendation && (
-                            <p className="text-xs" style={{ color: rec.gapState.bestRecommendation.color }}>
-                              → {rec.gapState.bestRecommendation.technique}: {rec.gapState.bestRecommendation.reason}
-                            </p>
-                          )}
-                          <p className="text-slate-400 text-[10px]">{rec.gapState.suggestion}</p>
-                        </div>
-                      )}
-
-                      {/* Echo record panel */}
-                      {rec.echoOpportunity && (
-                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
-                          <p className="text-xs font-bold text-cyan-400">⚡ Echo — {rec.echoAttempt?.finalResult || 'Opportunity Detected'}</p>
-                          {rec.echoAttempt && (
-                            <div className="grid grid-cols-2 gap-1 text-[10px]">
-                              <span className="text-slate-400">Intercept: <span className="text-white font-semibold">{rec.echoAttempt.interceptResult}</span></span>
-                              <span className="text-slate-400">Counter: <span className="text-white font-semibold">{rec.echoAttempt.counterResult}</span></span>
-                              <span className="text-slate-400">Footwork: <span className="text-white font-semibold">{rec.echoAttempt.footwork}</span></span>
-                              <span className="text-slate-400">Timing: <span className="text-white font-semibold">{rec.echoAttempt.timing}</span></span>
-                            </div>
-                          )}
-                          {rec.echoAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.echoAttempt.coachingFeedback}</p>}
-                          {rec.echoDeepAnalysis ? (
-                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
-                              <p className="text-xs font-bold text-cyan-400">🤖 Echo Deep Analysis <span className="ml-auto">{rec.echoDeepAnalysis.overallScore}/100</span></p>
-                              {rec.echoDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.echoDeepAnalysis.technicalBreakdown}</p>}
-                              {rec.echoDeepAnalysis.interceptAnalysis && <p className="text-slate-400 text-[10px]">Intercept: {rec.echoDeepAnalysis.interceptAnalysis}</p>}
-                              {rec.echoDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
-                            </div>
-                          ) : (
-                            <button onClick={() => getEchoDeepAnalysis(rec)} disabled={loadingEcho === rec.id}
-                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
-                              {loadingEcho === rec.id ? '⚙ Analysing Echo...' : '⚡ Get Echo Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Trap record panel */}
-                      {rec.trapOpportunity && (
-                        <div className="rounded-xl border border-purple-400/30 bg-purple-400/5 p-3 space-y-1.5">
-                          <p className="text-xs font-bold text-purple-400">🎭 Trap — {rec.trapAttempt?.finalResult || 'Opportunity Detected'}</p>
-                          {rec.trapAttempt && (
-                            <div className="grid grid-cols-2 gap-1 text-[10px]">
-                              <span className="text-slate-400">Fake→Real: <span className="text-white font-semibold">{rec.trapAttempt.fakeTarget} → {rec.trapAttempt.realTarget}</span></span>
-                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.trapAttempt.transitionSpeed}</span></span>
-                              <span className="text-slate-400">Touch: <span className="text-white font-semibold">{rec.trapAttempt.touchResult}</span></span>
-                              <span className="text-slate-400">Defender reacted: <span className="text-white font-semibold">{rec.trapAttempt.defenderReacted ? 'Yes' : 'No'}</span></span>
-                            </div>
-                          )}
-                          {rec.trapAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.trapAttempt.coachingFeedback}</p>}
-                          {rec.trapDeepAnalysis ? (
-                            <div className="rounded-lg border border-purple-400/20 bg-purple-400/5 p-2 space-y-1">
-                              <p className="text-xs font-bold text-purple-400">🤖 Trap Deep Analysis <span className="ml-2">{rec.trapDeepAnalysis.overallScore}/100</span></p>
-                              {rec.trapDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.trapDeepAnalysis.technicalBreakdown}</p>}
-                              {rec.trapDeepAnalysis.deceptionAssessment && <p className="text-slate-400 text-[10px]">Deception: {rec.trapDeepAnalysis.deceptionAssessment}</p>}
-                              {rec.trapDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
-                            </div>
-                          ) : (
-                            <button onClick={() => getTrapDeepAnalysis(rec)} disabled={loadingTrap === rec.id}
-                              className="w-full py-2 rounded-xl border border-purple-400/30 text-purple-400 text-xs font-bold hover:bg-purple-400/10 transition-all disabled:opacity-50">
-                              {loadingTrap === rec.id ? '⚙ Analysing Trap...' : '🎭 Get Trap Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Defence record panel */}
-                      {rec.defenceOpportunity && (
-                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.defenceOpportunity.overlayColor}40`, background: `${rec.defenceOpportunity.overlayColor}08` }}>
-                          <p className="text-xs font-bold" style={{ color: rec.defenceOpportunity.overlayColor }}>
-                            {rec.defenceOpportunity.recommendedDefence === 'EMERGENCY_BLOCK' ? '🛡 Emergency Block' : '⟳ Active Bavalai Defence'}
-                            {rec.defenceAttempt ? ` — ${rec.defenceAttempt.result}` : ''}
-                          </p>
-                          {rec.defenceAttempt && (
-                            <div className="grid grid-cols-2 gap-1 text-[10px]">
-                              <span className="text-slate-400">Stick active: <span className="text-white font-semibold">{rec.defenceAttempt.stickActive ? 'Yes' : 'No'}</span></span>
-                              <span className="text-slate-400">Body line: <span className="text-white font-semibold">{rec.defenceAttempt.bodyLineCovered ? 'Covered' : 'Exposed'}</span></span>
-                              <span className="text-slate-400">Block contact: <span className="text-white font-semibold">{rec.defenceAttempt.blockContact ? 'Yes' : 'No'}</span></span>
-                              <span className="text-slate-400">Bavalai: <span className="text-white font-semibold">{rec.defenceAttempt.bavalaiMaintained ? 'Maintained' : 'Lost'}</span></span>
-                            </div>
-                          )}
-                          {rec.defenceAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.defenceAttempt.coachingFeedback}</p>}
-                          {rec.defenceDeepAnalysis ? (
-                            <div className="rounded-lg border p-2 space-y-1" style={{ borderColor: `${rec.defenceOpportunity.overlayColor}20`, background: `${rec.defenceOpportunity.overlayColor}05` }}>
-                              <p className="text-xs font-bold" style={{ color: rec.defenceOpportunity.overlayColor }}>🤖 Defence Deep Analysis <span className="ml-2">{rec.defenceDeepAnalysis.overallScore}/100</span></p>
-                              {rec.defenceDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.defenceDeepAnalysis.technicalBreakdown}</p>}
-                              {rec.defenceDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
-                            </div>
-                          ) : (
-                            <button onClick={() => getDefenceDeepAnalysis(rec)} disabled={loadingDefence === rec.id}
-                              className="w-full py-2 rounded-xl border text-xs font-bold hover:opacity-80 transition-all disabled:opacity-50"
-                              style={{ borderColor: `${rec.defenceOpportunity.overlayColor}40`, color: rec.defenceOpportunity.overlayColor }}>
-                              {loadingDefence === rec.id ? '⚙ Analysing Defence...' : '🛡 Get Defence Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Retreat record panel */}
-                      {rec.retreatState && (
-                        <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: `${rec.retreatState.overlayColor}40`, background: `${rec.retreatState.overlayColor}08` }}>
-                          <p className="text-xs font-bold" style={{ color: rec.retreatState.overlayColor }}>
-                            ↩ Retreat — {rec.retreatState.result}
-                          </p>
-                          <div className="grid grid-cols-2 gap-1 text-[10px]">
-                            <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.retreatState.speed}</span></span>
-                            <span className="text-slate-400">Stick: <span className="text-white font-semibold">{rec.retreatState.stickStatus}</span></span>
-                            <span className="text-slate-400">Balance: <span className="text-white font-semibold">{rec.retreatState.balance}</span></span>
-                            <span className="text-slate-400">To Bavalai: <span className="text-white font-semibold">{rec.retreatState.returnedToBavalai ? 'Yes' : 'No'}</span></span>
-                          </div>
-                          {rec.retreatState.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.retreatState.coachingFeedback}</p>}
-                        </div>
-                      )}
-
-                      {/* Slide record panel */}
-                      {rec.slideOpportunity && (
-                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
-                          <p className="text-xs font-bold text-cyan-400">〜 Slide — {rec.slideAttempt?.finalResult || 'Opportunity Detected'}</p>
-                          {rec.slideAttempt && (
-                            <div className="grid grid-cols-2 gap-1 text-[10px]">
-                              <span className="text-slate-400">Upper touch: <span className="text-white font-semibold">{rec.slideAttempt.upperTouchResult}</span></span>
-                              <span className="text-slate-400">Lower touch: <span className="text-white font-semibold">{rec.slideAttempt.lowerTouchResult}</span></span>
-                              <span className="text-slate-400">U path: <span className="text-white font-semibold">{rec.slideAttempt.uPathDetected ? 'Detected' : 'Missing'}</span></span>
-                              <span className="text-slate-400">Flow: <span className="text-white font-semibold">{rec.slideAttempt.continuousFlow ? 'Continuous' : 'Broken'}</span></span>
-                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.slideAttempt.slideSpeedRating}</span></span>
-                              <span className="text-slate-400">Phase: <span className="text-white font-semibold">{rec.slideAttempt.currentPhase}</span></span>
-                            </div>
-                          )}
-                          {rec.slideAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.slideAttempt.coachingFeedback}</p>}
-                          {rec.slideDeepAnalysis ? (
-                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
-                              <p className="text-xs font-bold text-cyan-400">🤖 Slide Deep Analysis <span className="ml-2">{rec.slideDeepAnalysis.overallScore}/100</span></p>
-                              {rec.slideDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.slideDeepAnalysis.technicalBreakdown}</p>}
-                              {rec.slideDeepAnalysis.flowAssessment && <p className="text-slate-400 text-[10px]">Flow: {rec.slideDeepAnalysis.flowAssessment}</p>}
-                              {rec.slideDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
-                            </div>
-                          ) : (
-                            <button onClick={() => getSlideDeepAnalysis(rec)} disabled={loadingSlide === rec.id}
-                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
-                              {loadingSlide === rec.id ? '⚙ Analysing Slide...' : '〜 Get Slide Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Zip record panel */}
-                      {rec.zipOpportunity && (
-                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-3 space-y-1.5">
-                          <p className="text-xs font-bold text-cyan-400">
-                            ⚡⚡ {rec.zipOpportunity.zipType === 'NORMAL_ZIP' ? 'Normal' : 'Reverse'} Zip — {rec.zipAttempt?.finalResult || 'Opportunity Detected'}
-                          </p>
-                          {rec.zipAttempt && (
-                            <div className="grid grid-cols-2 gap-1 text-[10px]">
-                              <span className="text-slate-400">1st touch: <span className="text-white font-semibold">{rec.zipAttempt.firstTouchResult}</span></span>
-                              <span className="text-slate-400">2nd touch: <span className="text-white font-semibold">{rec.zipAttempt.secondTouchResult}</span></span>
-                              <span className="text-slate-400">Path: <span className="text-white font-semibold">{rec.zipAttempt.pathStraightness}</span></span>
-                              <span className="text-slate-400">Speed: <span className="text-white font-semibold">{rec.zipAttempt.speedRating}</span></span>
-                              <span className="text-slate-400">Hands together: <span className="text-white font-semibold">{rec.zipAttempt.handsTogethery ? 'Yes' : 'No'}</span></span>
-                              {rec.zipAttempt.timeBetweenTouches > 0 && (
-                                <span className="text-slate-400">Between touches: <span className="text-white font-semibold">{rec.zipAttempt.timeBetweenTouches}ms</span></span>
-                              )}
-                            </div>
-                          )}
-                          {rec.zipAttempt?.coachingFeedback && <p className="text-slate-300 text-[10px] italic">{rec.zipAttempt.coachingFeedback}</p>}
-                          {rec.zipDeepAnalysis ? (
-                            <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 space-y-1">
-                              <p className="text-xs font-bold text-cyan-400">🤖 Zip Deep Analysis <span className="ml-2">{rec.zipDeepAnalysis.overallScore}/100</span></p>
-                              {rec.zipDeepAnalysis.technicalBreakdown && <p className="text-slate-300 text-[10px]">{rec.zipDeepAnalysis.technicalBreakdown}</p>}
-                              {rec.zipDeepAnalysis.speedAssessment && <p className="text-slate-400 text-[10px]">Speed: {rec.zipDeepAnalysis.speedAssessment}</p>}
-                              {rec.zipDeepAnalysis.criticalFixes?.map((f: string, i: number) => <p key={i} className="text-red-400 text-[10px]">• {f}</p>)}
-                            </div>
-                          ) : (
-                            <button onClick={() => getZipDeepAnalysis(rec)} disabled={loadingZip === rec.id}
-                              className="w-full py-2 rounded-xl border border-cyan-400/30 text-cyan-400 text-xs font-bold hover:bg-cyan-400/10 transition-all disabled:opacity-50">
-                              {loadingZip === rec.id ? '⚙ Analysing Zip...' : '⚡⚡ Get Zip Deep Analysis'}
-                            </button>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Per-player scores */}
-                      {rec.players.map((p, pIdx) => (
-                        <div key={pIdx} className="rounded-xl border p-3 space-y-3" style={{ borderColor: `${p.color}30`, background: `${p.color}05` }}>
-                          <p className="text-xs font-bold" style={{ color: p.color }}>{p.label} — {p.technique}</p>
-                          <div className="space-y-2">
-                            {[
-                              { l: '🌀 Spin',   v: p.spinScore },
-                              { l: '💥 Power',  v: p.powerScore },
-                              { l: '⚡ Reflex', v: p.reflexScore },
-                              { l: '🏃 Speed',  v: speedScore10(p.attackSpeed), extra: `${p.attackSpeed}m/s` },
-                            ].map(({ l, v, extra }) => (
-                              <div key={l}>
-                                <div className="flex justify-between mb-0.5">
-                                  <span className="text-[10px] text-slate-400">{l}</span>
-                                  <span className="text-[10px]" style={{ color: p.color }}>{v}/10{extra ? ` (${extra})` : ''}</span>
-                                </div>
-                                <ScoreBar score={v} color={p.color} />
-                              </div>
-                            ))}
-                          </div>
-                          <div className="grid grid-cols-3 gap-1.5">
-                            {[
-                              { l: 'Score', v: p.metrics.overallScore, u: '/100' },
-                              { l: 'Balance', v: p.metrics.balance, u: '%' },
-                              { l: 'Height', v: p.estimatedHeight, u: 'cm' },
-                            ].map(({ l, v, u }) => (
-                              <div key={l} className="bg-slate-800/60 rounded-lg p-2 text-center border border-slate-700/40">
-                                <p className="text-[10px] text-slate-500 mb-0.5">{l}</p>
-                                <p className="text-xs font-bold" style={{ color: p.color }}>{v}<span className="text-[10px] text-slate-500">{u}</span></p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Save as Highlight — 4 categories */}
-                      {rec.videoSrc && rec.videoTimeSec !== undefined && (
-                        <div className="space-y-2">
-                          <p className="text-xs text-slate-400 font-semibold flex items-center gap-1.5">
-                            <Scissors size={12} /> Save as Highlight — choose type:
-                          </p>
-                          <div className="grid grid-cols-2 gap-2">
-                            {(Object.entries(CATEGORY_META) as [HighlightCategory, typeof CATEGORY_META[HighlightCategory]][]).map(([cat, meta]) => (
-                              <button key={cat}
-                                onClick={() => cutAndSaveHighlight(rec, cat)}
-                                disabled={!!cuttingClip}
-                                className="py-2.5 px-2 rounded-xl border font-semibold text-xs flex flex-col items-center gap-1 transition-all disabled:opacity-40 hover:opacity-90 active:scale-95"
-                                style={{ borderColor: `${meta.color}40`, background: `${meta.color}10`, color: meta.color }}>
-                                <span className="text-base">{meta.icon}</span>
-                                <span>{meta.label}</span>
-                                <span className="text-[9px] opacity-70 text-center leading-tight">{meta.desc}</span>
-                              </button>
-                            ))}
-                          </div>
-                          {cuttingClip?.id === rec.id && (
-                            <p className="text-orion-blue text-xs text-center animate-pulse">
-                              ✂️ Cutting {CATEGORY_META[cuttingClip.category].label} clip... video is playing for 6s
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => {
-                          const techs = new Set(rec.players.map(p => p.technique))
-                          const related = highlights.filter(h =>
-                            h.category === 'counter' ||
-                            h.techniques.some(t => techs.has(t))
-                          )
-                          setCounterClips(related)
-                          getCombatAdvice(rec)
-                          setTab('analyze')
-                        }}
-                          className="py-2 rounded-xl border border-purple-400/30 text-purple-400 text-xs font-semibold hover:bg-purple-400/10">
-                          ⚔️ Counter Moves
-                        </button>
-                        <button onClick={() => setRecords(prev => prev.filter(r => r.id !== rec.id))}
-                          className="py-2 rounded-xl border border-red-400/20 text-red-400/50 text-xs hover:text-red-400 flex items-center justify-center gap-1">
-                          <Trash2 size={11} /> Delete
-                        </button>
-                      </div>
-                    </div>
-                  )}
+            coachingHistory.map((entry, i) => (
+              <button key={i} onClick={() => {
+                if (videoRef.current) { videoRef.current.currentTime = entry.timeSec; videoRef.current.pause(); setIsPlaying(false) }
+                setCoachingMoment(entry.moment); setIsPausedByOrion(true); setCurrentTime(entry.timeSec); setTab('analyze')
+              }}
+                className="w-full rounded-2xl border border-slate-700 bg-slate-800/40 p-3 text-left hover:border-[#ef4444]/40 hover:bg-[#ef4444]/5 transition-all">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-white text-xs font-bold">{entry.timeStr}</span>
+                  <span className="text-[10px] text-slate-400">{entry.moment?.timelineNote || ''}</span>
                 </div>
-              ))}
-            </>
+                <p className="text-slate-300 text-[11px] leading-snug line-clamp-2">{entry.moment?.pauseReason || 'Training moment'}</p>
+                {entry.moment?.pointOpportunity && (
+                  <span className="inline-block mt-1.5 text-[10px] px-2 py-0.5 rounded-full font-bold"
+                    style={{ background: entry.moment.pointOpportunity.scoringPossibility === 'HIGH' ? '#00ff8820' : '#f59e0b20', color: entry.moment.pointOpportunity.scoringPossibility === 'HIGH' ? '#00ff88' : '#f59e0b' }}>
+                    {entry.moment.pointOpportunity.scoringPossibility} — {entry.moment.pointOpportunity.bestAction}
+                  </span>
+                )}
+              </button>
+            ))
           )}
         </div>
       )}
@@ -2736,130 +1847,38 @@ export default function VideoAnalyzer() {
       {/* ─── HIGHLIGHTS TAB ─── */}
       {tab === 'highlights' && (
         <div className="space-y-3">
-          {/* Category legend */}
-          <div className="grid grid-cols-2 gap-2">
-            {(Object.entries(CATEGORY_META) as [HighlightCategory, typeof CATEGORY_META[HighlightCategory]][]).map(([cat, meta]) => (
-              <div key={cat} className="rounded-xl border p-2.5 flex items-start gap-2" style={{ borderColor: `${meta.color}30`, background: `${meta.color}08` }}>
-                <span className="text-base flex-shrink-0">{meta.icon}</span>
-                <div className="min-w-0">
-                  <p className="text-xs font-bold" style={{ color: meta.color }}>{meta.label}</p>
-                  <p className="text-[10px] text-slate-500 leading-tight">{meta.desc}</p>
-                  <p className="text-[10px] mt-0.5" style={{ color: meta.color }}>
-                    {highlights.filter(h => h.category === cat).length} clip{highlights.filter(h => h.category === cat).length !== 1 ? 's' : ''}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Filter chips */}
-          <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-1">
-            <button onClick={() => setHlFilter('all')}
-              className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${hlFilter === 'all' ? 'bg-orion-blue text-white' : 'bg-slate-700 text-slate-400'}`}>
-              <Filter size={10} className="inline mr-1" />All
-            </button>
-            {(Object.entries(CATEGORY_META) as [HighlightCategory, typeof CATEGORY_META[HighlightCategory]][]).map(([cat, meta]) => (
-              <button key={cat} onClick={() => setHlFilter(cat)}
-                className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
-                style={hlFilter === cat ? { background: meta.color, color: '#000' } : { background: '#1e293b', color: meta.color }}>
-                {meta.icon} {meta.label}
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
+            {(['all', 'strike', 'defense', 'counter', 'acha'] as const).map(f => (
+              <button key={f} onClick={() => setHlFilter(f)}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${hlFilter === f ? 'bg-orion-blue text-white' : 'bg-slate-700 text-slate-400'}`}>
+                {f === 'all' ? 'All' : CATEGORY_META[f].label}
               </button>
             ))}
           </div>
-
           {filteredHighlights.length === 0 ? (
-            <div className="text-center py-12 space-y-2">
-              <p className="text-slate-500 text-sm">No {hlFilter === 'all' ? '' : CATEGORY_META[hlFilter as HighlightCategory].label + ' '}highlights yet.</p>
-              <p className="text-slate-600 text-xs">Go to Records → open a capture → tap a highlight type to cut a clip.</p>
+            <div className="rounded-2xl border border-slate-700 bg-slate-800/40 p-8 text-center">
+              <p className="text-slate-400 text-sm">No highlights saved yet.</p>
             </div>
           ) : (
-            <>
-              <p className="text-xs text-slate-500">{filteredHighlights.length} highlight{filteredHighlights.length !== 1 ? 's' : ''}</p>
-              {filteredHighlights.map(hl => {
-                const meta = CATEGORY_META[hl.category]
-                return (
-                  <div key={hl.id} className="glass rounded-2xl border overflow-hidden" style={{ borderColor: `${meta.color}30` }}>
-                    {/* Header */}
-                    <div className="flex items-center gap-2 px-3.5 pt-3.5 pb-2">
-                      <span className="text-xl flex-shrink-0">{meta.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${meta.color}20`, color: meta.color }}>{meta.label}</span>
-                          <span className="text-[10px] text-slate-500">{hl.videoTime} · {hl.playerCount}P</span>
-                        </div>
-                        <p className="text-white text-xs font-semibold truncate">{hl.techniques.join(' vs ')}</p>
-                        <p className="text-slate-500 text-[10px] truncate">{hl.videoName}</p>
-                      </div>
-                      <button onClick={() => {
-                        setHighlights(prev => {
-                          const next = prev.filter(h => h.id !== hl.id)
-                          saveHighlights(next)
-                          return next
-                        })
-                      }} className="p-1.5 text-red-400/40 hover:text-red-400 flex-shrink-0">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-
-                    {/* Video + speed + arrows */}
-                    <div className="px-3.5 pb-2">
-                      <HighlightPlayer hl={hl} />
-                    </div>
-
-                    {/* Score bars */}
-                    <div className="px-3.5 pb-2 grid grid-cols-2 gap-x-4 gap-y-1.5">
-                      {[
-                        { l: '🌀 Spin',   v: hl.spinScore },
-                        { l: '💥 Power',  v: hl.powerScore },
-                        { l: '⚡ Reflex', v: hl.reflexScore },
-                        { l: '🏃 Speed',  v: hl.speedScore },
-                      ].map(({ l, v }) => (
-                        <div key={l}>
-                          <div className="flex justify-between mb-0.5">
-                            <span className="text-[9px] text-slate-500">{l}</span>
-                            <span className="text-[9px]" style={{ color: meta.color }}>{v}/10</span>
-                          </div>
-                          <ScoreBar score={v} color={meta.color} />
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Pros/Cons */}
-                    {(hl.pros || hl.cons) && (
-                      <div className="px-3.5 pb-3.5 grid grid-cols-2 gap-2">
-                        {hl.pros && (
-                          <div className="rounded-xl bg-green-400/5 border border-green-400/15 p-2 space-y-1">
-                            <p className="text-green-400 text-[10px] font-bold">✅ Pros</p>
-                            {hl.pros.slice(0, 2).map((p, i) => <p key={i} className="text-slate-400 text-[10px]">• {p}</p>)}
-                          </div>
-                        )}
-                        {hl.cons && (
-                          <div className="rounded-xl bg-red-400/5 border border-red-400/15 p-2 space-y-1">
-                            <p className="text-red-400 text-[10px] font-bold">❌ Cons</p>
-                            {hl.cons.slice(0, 2).map((c, i) => <p key={i} className="text-slate-400 text-[10px]">• {c}</p>)}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {hl.coachTip && (
-                      <div className="px-3.5 pb-3.5">
-                        <p className="text-orion-blue text-xs">🎓 {hl.coachTip}</p>
-                      </div>
-                    )}
-
-                    {/* Download */}
-                    {hl.clipUrl && (
-                      <div className="px-3.5 pb-3.5">
-                        <a href={hl.clipUrl} download={`orion_${hl.category}_${hl.videoTime.replace(/:/g, '-')}.webm`}
-                          className="flex items-center justify-center gap-2 py-2 rounded-xl border border-slate-700 text-slate-400 text-xs hover:text-white transition-all">
-                          <Download size={12} /> Download Clip
-                        </a>
-                      </div>
-                    )}
+            filteredHighlights.map(hl => (
+              <div key={hl.id} className="rounded-2xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{CATEGORY_META[hl.category].icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-xs font-bold truncate">{hl.title}</p>
+                    <p className="text-slate-400 text-[10px]">{hl.videoName} · {hl.videoTime}</p>
                   </div>
-                )
-              })}
-            </>
+                  <button onClick={() => {
+                    const updated = highlights.filter(h => h.id !== hl.id)
+                    setHighlights(updated); saveHighlights(updated)
+                  }} className="p-1.5 text-slate-500 hover:text-red-400 transition-all">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <HighlightPlayer hl={hl} />
+                {hl.coachTip && <p className="text-yellow-300 text-[11px] leading-snug">{hl.coachTip}</p>}
+              </div>
+            ))
           )}
         </div>
       )}
@@ -2867,35 +1886,28 @@ export default function VideoAnalyzer() {
       {/* ─── RECORDINGS TAB ─── */}
       {tab === 'recordings' && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500 uppercase tracking-widest">Live Camera Recordings</p>
-            {recordedVideos.length > 0 && (
-              <button onClick={() => setRecordedVideos([])} className="text-xs text-red-400/60 hover:text-red-400 flex items-center gap-1"><Trash2 size={12} /> Clear</button>
-            )}
-          </div>
           {recordedVideos.length === 0 ? (
-            <div className="text-center py-16 text-slate-500 text-sm">No recordings yet.<br />Switch to Live Camera → press Record.</div>
+            <div className="rounded-2xl border border-slate-700 bg-slate-800/40 p-8 text-center">
+              <p className="text-slate-400 text-sm">No recordings yet.</p>
+              <p className="text-slate-500 text-xs mt-1">Use Live Camera mode to record sessions.</p>
+            </div>
           ) : (
-            recordedVideos.map(v => (
-              <div key={v.url} className="glass rounded-2xl border border-orion-border p-4 space-y-3">
+            recordedVideos.map((rv, i) => (
+              <div key={i} className="rounded-2xl border border-slate-700 bg-slate-800/40 p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <div><p className="text-white text-sm font-semibold">{v.name}</p><p className="text-slate-500 text-xs">{v.time}</p></div>
-                  <a href={v.url} download={v.name}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orion-blue/15 border border-orion-blue/30 text-orion-blue text-xs font-bold">
-                    <Download size={13} /> Save
-                  </a>
+                  <p className="text-white text-xs font-semibold">{rv.name}</p>
+                  <span className="text-slate-400 text-[10px]">{rv.time}</span>
                 </div>
-                <video src={v.url} controls className="w-full rounded-xl border border-slate-700" style={{ maxHeight: 300 }} />
+                <video src={rv.url} controls className="w-full rounded-xl" style={{ maxHeight: 200 }} />
+                <a href={rv.url} download={rv.name}
+                  className="flex items-center justify-center gap-1.5 w-full py-2 rounded-xl bg-slate-700 border border-slate-600 text-slate-300 text-xs font-semibold">
+                  <Download size={13} /> Download
+                </a>
               </div>
             ))
           )}
         </div>
       )}
-
-      <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-3">
-        <p className="text-yellow-400 text-xs font-semibold mb-0.5">Safety Notice</p>
-        <p className="text-slate-400 text-xs">AI analysis for training feedback only. Always train under qualified supervision.</p>
-      </div>
     </div>
   )
 }
