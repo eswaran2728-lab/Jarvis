@@ -17,6 +17,7 @@ import { runCombatAnalysis } from '@/lib/orion/runCombatAnalysis'
 import {
   Play, Pause, Upload, ChevronLeft, ChevronRight, Scan,
 } from 'lucide-react'
+import { SavedCombatMoment } from '@/lib/orion/memoryLibrary'
 
 const SKEL_PAIRS = [[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28]]
 
@@ -30,6 +31,7 @@ type Tab = 'coach' | 'mistakes' | 'counters' | 'skills'
 export default function AnalysisPage() {
   // ── Media ──────────────────────────────────────────────────────────────────
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [videoName, setVideoName] = useState('Combat Video')
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -232,6 +234,7 @@ export default function AnalysisPage() {
   // ── File upload ────────────────────────────────────────────────────────────
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('video/')) return
+    setVideoName(file.name)
     setVideoSrc(URL.createObjectURL(file))
     setIsPlaying(false); setIsPausedByOrion(false); setCoachMoment(null)
     setMoments([]); lastPauseRef.current = 0; setPlayersLocked(false)
@@ -452,8 +455,10 @@ export default function AnalysisPage() {
           <CoachPauseCard
             moment={coachMoment}
             timestamp={fmtTime(currentTime)}
+            timestampSec={currentTime}
             loading={loadingCoach}
             timedOut={analysisTimedOut}
+            videoName={videoName}
             onReplay={handleReplay}
             onSlowMotion={handleSlowMotion}
             onContinue={handleContinue}
@@ -478,15 +483,15 @@ export default function AnalysisPage() {
             </div>
 
             {tab === 'coach' && (
-              <CombatSummary moments={moments} onJump={jumpTo} />
+              <CombatSummary moments={moments} onJump={jumpTo} videoName={videoName} />
             )}
 
             {tab === 'mistakes' && (
-              <CombatSummary moments={mistakeMoments} onJump={jumpTo} />
+              <CombatSummary moments={mistakeMoments} onJump={jumpTo} videoName={videoName} />
             )}
 
             {tab === 'counters' && (
-              <CombatSummary moments={counterMoments} onJump={jumpTo} />
+              <CombatSummary moments={counterMoments} onJump={jumpTo} videoName={videoName} />
             )}
 
             {tab === 'skills' && (

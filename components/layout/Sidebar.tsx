@@ -1,11 +1,12 @@
 'use client'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Video, ClipboardList, BookOpen } from 'lucide-react'
+import { Home, MessageCircle, Dumbbell, CheckSquare, Bell, TrendingUp, Settings, Video, ClipboardList, BookOpen, Bookmark } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard',  icon: Home,          label: 'Dashboard'    },
   { href: '/analysis',   icon: Video,         label: 'Analysis'     },
+  { href: '/memory',     icon: Bookmark,      label: 'ORION Memory' },
   { href: '/academy',    icon: BookOpen,      label: 'Academy'      },
   { href: '/assistant',  icon: MessageCircle, label: 'ORION'        },
   { href: '/training',   icon: Dumbbell,      label: 'Training'     },

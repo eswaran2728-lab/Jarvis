@@ -1,23 +1,30 @@
 'use client'
-import { Play, RotateCcw, ChevronRight } from 'lucide-react'
+import { useState } from 'react'
+import { Play, RotateCcw, ChevronRight, Bookmark } from 'lucide-react'
 import SimpleAdvancedToggle from './SimpleAdvancedToggle'
+import SaveMomentModal from './SaveMomentModal'
 import { SimpleCoachMoment } from '@/lib/orion/coachMomentBuilder'
+import { SavedCombatMoment } from '@/lib/orion/memoryLibrary'
 
 type Props = {
   moment: SimpleCoachMoment | null
   timestamp: string
+  timestampSec: number
   loading: boolean
   timedOut: boolean
+  videoName?: string
   onReplay: () => void
   onSlowMotion: () => void
   onContinue: () => void
   onQuickScan: () => void
+  onSaved?: (m: SavedCombatMoment) => void
 }
 
 export default function CoachPauseCard({
-  moment, timestamp, loading, timedOut,
-  onReplay, onSlowMotion, onContinue, onQuickScan,
+  moment, timestamp, timestampSec, loading, timedOut, videoName,
+  onReplay, onSlowMotion, onContinue, onQuickScan, onSaved,
 }: Props) {
+  const [saveOpen, setSaveOpen] = useState(false)
   const playerColor = moment?.player?.includes('Red') ? '#ef4444' : moment?.player?.includes('Blue') ? '#3b82f6' : '#00d4ff'
 
   return (
@@ -121,6 +128,29 @@ export default function CoachPauseCard({
           Go <ChevronRight size={15} />
         </button>
       </div>
+
+      {/* Save Moment button */}
+      {!loading && !timedOut && moment && (
+        <div className="px-4 pb-4">
+          <button onClick={() => setSaveOpen(true)}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl font-bold active:scale-95 transition-all"
+            style={{ fontSize: 16, background: '#00d4ff10', border: '1px solid #00d4ff40', color: '#00d4ff' }}>
+            <Bookmark size={16} /> Save Moment
+          </button>
+        </div>
+      )}
+
+      <SaveMomentModal
+        open={saveOpen}
+        timestamp={timestampSec}
+        timeStr={timestamp}
+        player={moment?.player || 'Both'}
+        moment={moment}
+        momentType={moment?.momentType || 'good_action'}
+        videoName={videoName || 'Combat Video'}
+        onClose={() => setSaveOpen(false)}
+        onSaved={m => { onSaved?.(m); setSaveOpen(false) }}
+      />
     </div>
   )
 }

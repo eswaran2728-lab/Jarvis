@@ -1,13 +1,16 @@
 'use client'
 import { ScanMoment } from '@/lib/orion/quickScan'
 import MomentList from './MomentList'
+import { SavedCombatMoment } from '@/lib/orion/memoryLibrary'
 
 type Props = {
   moments: ScanMoment[]
   onJump: (t: number) => void
+  videoName?: string
+  onSaved?: (m: SavedCombatMoment) => void
 }
 
-export default function CombatSummary({ moments, onJump }: Props) {
+export default function CombatSummary({ moments, onJump, videoName, onSaved }: Props) {
   const mistakes = moments.filter(m => m.type === 'mistake').length
   const counters = moments.filter(m => m.type === 'counter').length
   const openPoints = moments.filter(m => m.type === 'scoring_chance').length
@@ -39,7 +42,7 @@ export default function CombatSummary({ moments, onJump }: Props) {
       </div>
 
       {/* Moment list */}
-      <MomentList moments={moments} onJump={onJump} />
+      <MomentList moments={moments} onJump={onJump} videoName={videoName} onSaved={onSaved} />
     </div>
   )
 }
