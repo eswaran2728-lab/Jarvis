@@ -6,6 +6,7 @@ export type SimpleCoachMoment = {
   skills: string[]
   positiveNote: string | null
   timelineNote: string
+  isFallback?: boolean
   advanced: {
     stickSpeed: string
     confidence: number
@@ -49,5 +50,6 @@ export async function fetchCoachMoment(payload: Record<string, any>): Promise<Si
     },
     momentType,
     mistakeCodes: raw.mistakeCodes || [],
+    isFallback: raw._fallback === true,
   }
 }

@@ -73,20 +73,22 @@ IMPORTANT: relatedSkills must only contain: ZIP, SLIDE, RETREAT, COUNTER_TOUCH, 
     const text = response.content[0].type === 'text' ? response.content[0].text : '{}'
     const json = JSON.parse(text.replace(/```json\n?|```/g, '').trim())
     return NextResponse.json(json)
-  } catch (err) {
+  } catch (err: any) {
+    const isNoKey = !process.env.ANTHROPIC_API_KEY || err?.message?.includes('API key')
     console.error('combat-moment error:', err)
     return NextResponse.json({
       player: 'Both',
       action: 'Combat exchange detected.',
-      mistake: null,
+      mistake: isNoKey ? 'ORION AI is not connected — add ANTHROPIC_API_KEY in Vercel Environment Variables to enable coaching.' : null,
       whyRisky: 'Monitor spacing and guard position.',
-      correction: 'Maintain Bavalai and exit after every action.',
+      correction: isNoKey ? 'Go to Vercel → Settings → Environment Variables → add ANTHROPIC_API_KEY, then redeploy.' : 'Maintain Bavalai and exit after every action.',
       bestCounter: 'RETREAT — exit immediately after any touch.',
       relatedSkills: ['RETREAT', 'GUARD_RESET'],
       mistakeCodes: [],
       positiveNote: null,
       autoPause: true,
       timelineNote: 'Moment detected',
+      _fallback: true,
     })
   }
 }

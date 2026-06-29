@@ -57,6 +57,14 @@ export default function CoachPauseCard({
         </div>
       )}
 
+      {/* Fallback warning */}
+      {!loading && !timedOut && moment?.isFallback && (
+        <div className="mx-4 mt-3 rounded-xl px-3 py-2.5 flex items-start gap-2" style={{ background: '#f59e0b10', border: '1px solid #f59e0b40' }}>
+          <span style={{ fontSize: 15 }}>⚠️</span>
+          <p className="text-yellow-300 text-sm leading-snug">ORION AI not connected. Add <strong>ANTHROPIC_API_KEY</strong> in Vercel → Settings → Environment Variables, then redeploy.</p>
+        </div>
+      )}
+
       {/* Moment content */}
       {!loading && !timedOut && moment && (
         <div className="p-4 space-y-4">
