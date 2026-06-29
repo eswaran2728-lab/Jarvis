@@ -5,7 +5,8 @@ import {
   SavedCombatMoment, MomentCategory,
   getSavedMoments, deleteSavedMoment, updateSavedMoment, searchSavedMoments,
 } from '@/lib/orion/memoryLibrary'
-import { Bookmark, Play, Pencil, Trash2, Star, Search, X } from 'lucide-react'
+import { getVideoBlob } from '@/lib/orion/videoStore'
+import { Bookmark, Play, Pause, Pencil, Trash2, Star, Search, X, AlertCircle } from 'lucide-react'
 
 const CATEGORY_META: Record<MomentCategory | 'all' | 'reference', { label: string; color: string }> = {
   all:           { label: 'All',          color: '#00d4ff' },
@@ -253,54 +254,141 @@ function MomentCard({
 // ── Play Clip Modal ───────────────────────────────────────────────────────────
 function PlayClipModal({ moment, onClose }: { moment: SavedCombatMoment; onClose: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
-
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    v.currentTime = moment.clipStart
-    v.play()
-    const checkEnd = setInterval(() => {
-      if (v.currentTime >= moment.clipEnd) { v.pause(); clearInterval(checkEnd) }
-    }, 100)
-    return () => clearInterval(checkEnd)
-  }, [moment])
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const checkRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 
+  useEffect(() => {
+    let url = ''
+    getVideoBlob(moment.sourceVideoId).then(result => {
+      if (result) {
+        url = URL.createObjectURL(result.blob)
+        setVideoUrl(url)
+      } else {
+        setNotFound(true)
+      }
+      setLoading(false)
+    }).catch(() => { setNotFound(true); setLoading(false) })
+    return () => { if (url) URL.revokeObjectURL(url) }
+  }, [moment.sourceVideoId])
+
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !videoUrl) return
+    v.currentTime = moment.clipStart
+    v.play()
+    setPlaying(true)
+    checkRef.current = setInterval(() => {
+      if (v.currentTime >= moment.clipEnd) {
+        v.pause(); setPlaying(false)
+        if (checkRef.current) clearInterval(checkRef.current)
+      }
+    }, 100)
+    return () => { if (checkRef.current) clearInterval(checkRef.current) }
+  }, [videoUrl, moment.clipStart, moment.clipEnd])
+
+  function togglePlay() {
+    const v = videoRef.current; if (!v) return
+    if (v.paused) {
+      if (v.currentTime >= moment.clipEnd) v.currentTime = moment.clipStart
+      v.play(); setPlaying(true)
+    } else {
+      v.pause(); setPlaying(false)
+    }
+  }
+
+  function replay() {
+    const v = videoRef.current; if (!v) return
+    v.currentTime = moment.clipStart
+    v.play(); setPlaying(true)
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.85)' }}>
-      <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden space-y-0">
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.88)' }}>
+      <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-700 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
           <div className="min-w-0">
             <p className="text-slate-400 text-xs">Playing saved moment</p>
-            <p className="text-white font-bold text-base truncate">{moment.customName}</p>
+            <p className="text-white font-bold truncate" style={{ fontSize: 17 }}>{moment.customName}</p>
           </div>
-          <button onClick={onClose} className="ml-3 p-1.5 rounded-lg bg-slate-800 text-slate-400 flex-shrink-0">
+          <button onClick={onClose} className="ml-3 p-1.5 rounded-lg bg-slate-800 text-slate-400 flex-shrink-0 active:scale-95">
             <X size={16} />
           </button>
         </div>
 
-        {/* Clip info */}
+        {/* Clip time info */}
         <div className="px-4 py-2 flex gap-2 text-sm text-slate-500">
-          <span>{fmtTime(moment.clipStart)} → {fmtTime(moment.clipEnd)}</span>
+          <span className="font-semibold text-slate-400">{fmtTime(moment.clipStart)} → {fmtTime(moment.clipEnd)}</span>
           <span>·</span>
           <span className="truncate">{moment.sourceVideoName}</span>
         </div>
 
-        {/* Placeholder — real clip playback requires the source video */}
-        <div className="mx-4 mb-4 rounded-xl bg-black flex items-center justify-center" style={{ height: 200 }}>
-          <div className="text-center space-y-2 p-4">
-            <Play size={36} className="text-slate-700 mx-auto" />
-            <p className="text-slate-400 text-sm font-semibold">Clip: {fmtTime(moment.clipStart)} – {fmtTime(moment.clipEnd)}</p>
-            <p className="text-slate-600 text-xs">Re-open the source video and jump to {fmtTime(moment.timestamp)} to replay.</p>
-          </div>
+        {/* Video area */}
+        <div className="mx-3 mb-3 rounded-xl bg-black overflow-hidden" style={{ minHeight: 220 }}>
+          {loading && (
+            <div className="flex items-center justify-center h-56">
+              <div className="w-6 h-6 border-2 border-orion-blue border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+
+          {notFound && !loading && (
+            <div className="flex flex-col items-center justify-center h-56 gap-3 px-4 text-center">
+              <AlertCircle size={32} className="text-slate-600" />
+              <p className="text-slate-300 font-semibold" style={{ fontSize: 16 }}>Video not available</p>
+              <p className="text-slate-500 text-sm">Re-open the source video in Analysis and play it — ORION will remember it.</p>
+            </div>
+          )}
+
+          {videoUrl && !loading && (
+            <div className="relative">
+              <video
+                ref={videoRef}
+                src={videoUrl}
+                className="w-full rounded-xl"
+                playsInline
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+              />
+              {/* Big play/pause tap overlay */}
+              <button onClick={togglePlay}
+                className="absolute inset-0 flex items-center justify-center"
+                style={{ background: 'transparent' }}>
+                {!playing && (
+                  <div className="rounded-full p-4" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                    <Play size={32} className="text-white" />
+                  </div>
+                )}
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="px-4 pb-4">
+        {/* Controls */}
+        {videoUrl && !loading && (
+          <div className="flex gap-2 px-3 pb-3">
+            <button onClick={togglePlay}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-800 border border-slate-700 text-white font-semibold active:scale-95 transition-all"
+              style={{ fontSize: 16 }}>
+              {playing ? <Pause size={18} /> : <Play size={18} />}
+              {playing ? 'Pause' : 'Play'}
+            </button>
+            <button onClick={replay}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-semibold active:scale-95 transition-all"
+              style={{ fontSize: 16, background: '#00d4ff10', border: '1px solid #00d4ff40', color: '#00d4ff' }}>
+              ↩ Replay
+            </button>
+          </div>
+        )}
+
+        <div className="px-3 pb-4">
           <button onClick={onClose}
-            className="w-full py-3 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 font-semibold"
-            style={{ fontSize: 16 }}>
+            className="w-full py-3 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 font-semibold active:scale-95"
+            style={{ fontSize: 15 }}>
             Close
           </button>
         </div>

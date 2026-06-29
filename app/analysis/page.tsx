@@ -18,6 +18,7 @@ import {
   Play, Pause, Upload, ChevronLeft, ChevronRight, Scan,
 } from 'lucide-react'
 import { SavedCombatMoment } from '@/lib/orion/memoryLibrary'
+import { storeVideo } from '@/lib/orion/videoStore'
 
 const SKEL_PAIRS = [[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28]]
 
@@ -235,6 +236,8 @@ export default function AnalysisPage() {
   const handleFile = useCallback((file: File) => {
     if (!file.type.startsWith('video/')) return
     setVideoName(file.name)
+    const id = `vid_${file.name}`
+    storeVideo(id, file).catch(() => {})
     setVideoSrc(URL.createObjectURL(file))
     setIsPlaying(false); setIsPausedByOrion(false); setCoachMoment(null)
     setMoments([]); lastPauseRef.current = 0; setPlayersLocked(false)
