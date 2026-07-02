@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { Bookmark } from 'lucide-react'
+import { Bookmark, ChevronRight } from 'lucide-react'
 import SimpleAdvancedToggle from './SimpleAdvancedToggle'
 import SaveMomentModal from './SaveMomentModal'
 import { ScanMoment } from '@/lib/orion/quickScan'
@@ -14,72 +14,104 @@ type Props = {
 }
 
 const TYPE_COLOR: Record<string, string> = {
-  mistake: '#ef4444',
-  counter: '#a855f7',
+  mistake:        '#ef4444',
+  counter:        '#a855f7',
   scoring_chance: '#00d4ff',
-  good_action: '#00ff88',
+  good_action:    '#22c55e',
+}
+const TYPE_LABEL: Record<string, string> = {
+  mistake:        'MISTAKE',
+  counter:        'COUNTER',
+  scoring_chance: 'OPEN POINT',
+  good_action:    'GOOD',
 }
 
 export default function MomentList({ moments, onJump, videoName, onSaved }: Props) {
   if (!moments.length) return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-8 text-center">
-      <p className="text-slate-400" style={{ fontSize: 16 }}>No moments yet.</p>
-      <p className="text-slate-500 text-sm mt-1">Run Scan Full Match to see all combat moments.</p>
+    <div className="rounded-2xl p-8 text-center"
+      style={{ background: 'rgba(8,13,26,0.6)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <p className="text-slate-400 font-semibold" style={{ fontSize: 16 }}>No moments captured yet.</p>
+      <p className="text-slate-600 text-sm mt-1">Run Scan Full Match or play the video — ORION will auto-pause.</p>
     </div>
   )
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {moments.map(m => <MomentCard key={m.id} moment={m} onJump={onJump} videoName={videoName} onSaved={onSaved} />)}
     </div>
   )
 }
 
-function MomentCard({
-  moment, onJump, videoName, onSaved,
-}: {
-  moment: ScanMoment
-  onJump: (t: number) => void
-  videoName?: string
-  onSaved?: (m: SavedCombatMoment) => void
+function MomentCard({ moment, onJump, videoName, onSaved }: {
+  moment: ScanMoment; onJump: (t: number) => void; videoName?: string; onSaved?: (m: SavedCombatMoment) => void
 }) {
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [showAdv, setShowAdv] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
   const color = TYPE_COLOR[moment.type] || '#00d4ff'
   const c = moment.coach
 
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-900/60 overflow-hidden">
-      {/* Top row — tap to jump */}
-      <button onClick={() => onJump(moment.timestamp)} className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-slate-800/50 transition-all">
-        <span className="text-white font-black tabular-nums" style={{ fontSize: 16 }}>{moment.timeStr}</span>
-        <span className="flex-1 text-slate-200 leading-snug" style={{ fontSize: 16 }}>
+    <div className="rounded-2xl overflow-hidden"
+      style={{
+        background: 'linear-gradient(160deg, rgba(8,13,26,0.95), rgba(5,8,16,0.98))',
+        border: '1px solid rgba(255,255,255,0.06)',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.3)',
+      }}>
+      {/* Top row */}
+      <button onClick={() => onJump(moment.timestamp)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left transition-all active:bg-white/5">
+        {/* Time + type indicator */}
+        <div className="flex-shrink-0 flex items-center gap-2">
+          <div className="w-1 h-8 rounded-full flex-shrink-0" style={{ background: `linear-gradient(to bottom, ${color}, ${color}44)` }} />
+          <div>
+            <p className="font-black tabular-nums text-white" style={{ fontSize: 17, lineHeight: 1 }}>{moment.timeStr}</p>
+            <p className="font-bold uppercase tracking-wider mt-0.5" style={{ fontSize: 9, color, letterSpacing: '0.1em' }}>
+              {TYPE_LABEL[moment.type] || moment.type}
+            </p>
+          </div>
+        </div>
+
+        {/* Main text */}
+        <p className="flex-1 text-slate-200 leading-snug" style={{ fontSize: 15 }}>
           {c.mistake || c.positiveNote || c.timelineNote}
-        </span>
-        <span className="text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: `${color}15`, color, border: `1px solid ${color}30` }}>
-          {moment.type.replace('_', ' ')}
-        </span>
+        </p>
+
+        <ChevronRight size={14} className="text-slate-600 flex-shrink-0" />
       </button>
 
-      {/* Fix + Counter quick view */}
-      <div className="px-4 pb-2 space-y-1">
-        <p className="text-yellow-200 text-sm">Fix: {c.fix}</p>
-        {c.counter && <p className="text-orion-blue text-sm">Counter: {c.counter}</p>}
+      {/* Fix / Counter */}
+      <div className="px-4 pb-3 space-y-1 -mt-1">
+        {c.fix && (
+          <p className="text-sm" style={{ color: '#fcd34d' }}>
+            <span className="text-slate-600 text-xs font-semibold mr-1">Fix</span>{c.fix}
+          </p>
+        )}
+        {c.counter && (
+          <p className="text-sm" style={{ color: '#00d4ff' }}>
+            <span className="text-slate-600 text-xs font-semibold mr-1">Counter</span>{c.counter}
+          </p>
+        )}
       </div>
 
-      {/* Bottom row: Advanced + Save */}
-      <div className="px-4 pb-4 flex items-center gap-3">
-        <button onClick={() => setShowAdvanced(v => !v)}
-          className="text-slate-500 text-sm font-semibold underline underline-offset-2">
-          {showAdvanced ? 'Hide Advanced ▲' : 'Advanced ▼'}
+      {/* Footer: advanced + save */}
+      <div className="flex items-center gap-2 px-4 pb-3">
+        <button onClick={() => setShowAdv(v => !v)}
+          className="text-xs font-bold uppercase tracking-wider transition-all"
+          style={{ color: showAdv ? '#00d4ff' : '#475569', letterSpacing: '0.08em' }}>
+          {showAdv ? '▲ Hide' : '▼ Advanced'}
         </button>
         <button onClick={() => setSaveOpen(true)}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold active:scale-95 transition-all"
-          style={{ background: '#00d4ff10', border: '1px solid #00d4ff30', color: '#00d4ff' }}>
-          <Bookmark size={12} /> Save
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold active:scale-95 transition-all"
+          style={{ background: 'rgba(0,212,255,0.08)', border: '1px solid rgba(0,212,255,0.25)', color: '#00d4ff', fontSize: 12 }}>
+          <Bookmark size={11} /> Save
         </button>
       </div>
-      {showAdvanced && <div className="px-4 pb-4"><SimpleAdvancedToggle data={c.advanced} /></div>}
+
+      {showAdv && (
+        <div className="px-4 pb-4">
+          <SimpleAdvancedToggle data={c.advanced} />
+        </div>
+      )}
 
       <SaveMomentModal
         open={saveOpen}

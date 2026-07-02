@@ -2,85 +2,147 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Design tokens ────────────────────────────────────────────────────────── */
 :root {
-  --orion-blue: #00d4ff;
-  --orion-navy: #0a0e1a;
-  --orion-dark: #050810;
+  --orion-blue:   #00d4ff;
+  --orion-navy:   #0a0e1a;
+  --orion-dark:   #03060f;
+  --orion-card:   #080d1a;
+  --orion-border: #1a2540;
+  --orion-glow:   rgba(0,212,255,0.18);
 }
 
-* {
-  box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
-}
+/* ── Reset ────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+* { -webkit-tap-highlight-color: transparent; }
 
-html {
-  /* Prevent text size inflation on iOS rotation */
-  -webkit-text-size-adjust: 100%;
-}
-
+/* ── Base ─────────────────────────────────────────────────────────────────── */
 body {
-  background-color: #050810;
+  background-color: var(--orion-dark);
   color: #e2e8f0;
-  font-family: 'Inter', system-ui, sans-serif;
-  /* Prevent horizontal scroll on mobile */
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* Subtle grid overlay for futuristic feel */
+  background-image:
+    linear-gradient(rgba(0,212,255,0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.022) 1px, transparent 1px);
+  background-size: 40px 40px;
 }
 
-/* iOS safe area for bottom nav */
-.safe-area-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
+/* ── Safe areas ──────────────────────────────────────────────────────────── */
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+main { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 1024px) { main { padding-bottom: 0; } }
 
-/* Ensure main content doesn't hide under bottom nav on iOS */
-main {
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
-}
-
-@media (min-width: 1024px) {
-  main { padding-bottom: 0; }
-}
-
+/* ── Glass surface ──────────────────────────────────────────────────────── */
 .glass {
-  background: rgba(13, 21, 38, 0.8);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(0, 212, 255, 0.15);
+  background: rgba(8,13,26,0.82);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid rgba(0,212,255,0.12);
 }
 
-.glow-blue {
-  box-shadow: 0 0 20px rgba(0, 212, 255, 0.3), 0 0 40px rgba(0, 212, 255, 0.1);
+/* ── Glow effects ────────────────────────────────────────────────────────── */
+.glow-blue  { box-shadow: 0 0 20px rgba(0,212,255,0.25), 0 0 60px rgba(0,212,255,0.08); }
+.glow-red   { box-shadow: 0 0 20px rgba(239,68,68,0.25),  0 0 60px rgba(239,68,68,0.08);  }
+.glow-text  { text-shadow: 0 0 12px rgba(0,212,255,0.9), 0 0 30px rgba(0,212,255,0.4); }
+
+/* ── ORION card surface ──────────────────────────────────────────────────── */
+.orion-card {
+  background: linear-gradient(145deg, rgba(8,13,26,0.95), rgba(5,8,16,0.98));
+  border: 1px solid rgba(0,212,255,0.14);
+  border-radius: 20px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(0,212,255,0.06);
 }
 
-.glow-text {
-  text-shadow: 0 0 10px rgba(0, 212, 255, 0.8);
+/* ── Neon border variant ─────────────────────────────────────────────────── */
+.neon-border {
+  border: 1px solid rgba(0,212,255,0.35);
+  box-shadow: 0 0 0 1px rgba(0,212,255,0.08), inset 0 0 20px rgba(0,212,255,0.04);
 }
 
-.scrollbar-hide::-webkit-scrollbar { display: none; }
-.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+/* ── Button base ─────────────────────────────────────────────────────────── */
+.btn-orion {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 20px; border-radius: 14px; font-weight: 700; font-size: 15px;
+  background: linear-gradient(135deg, rgba(0,212,255,0.15), rgba(59,130,246,0.15));
+  border: 1px solid rgba(0,212,255,0.4);
+  color: #00d4ff;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.btn-orion:active { transform: scale(0.97); }
+.btn-orion:hover  { background: linear-gradient(135deg, rgba(0,212,255,0.22), rgba(59,130,246,0.22)); }
 
-/* Better touch targets on mobile */
-@media (max-width: 1023px) {
-  button, a { min-height: 44px; }
-  input, textarea, select { font-size: 16px !important; } /* Prevents iOS zoom on focus */
+/* ── Stat chip ───────────────────────────────────────────────────────────── */
+.stat-chip {
+  background: rgba(0,212,255,0.06);
+  border: 1px solid rgba(0,212,255,0.2);
+  border-radius: 12px;
+  padding: 10px 14px;
 }
 
-@keyframes orb-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.05); opacity: 0.9; }
-}
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.2); border-radius: 99px; }
 
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@keyframes orion-pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.7; transform: scale(1.04); }
+}
+@keyframes orion-glow-pulse {
+  0%,100% { box-shadow: 0 0 8px rgba(0,212,255,0.3); }
+  50%      { box-shadow: 0 0 20px rgba(0,212,255,0.7), 0 0 40px rgba(0,212,255,0.3); }
+}
+@keyframes orion-scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(500%); opacity: 0; }
+}
 @keyframes rotate-ring {
   from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
-.orb-pulse { animation: orb-pulse 3s ease-in-out infinite; }
-.rotate-ring { animation: rotate-ring 8s linear infinite; }
+.orb-pulse    { animation: orion-pulse 3s ease-in-out infinite; }
+.rotate-ring  { animation: rotate-ring 8s linear infinite; }
+.scan-line    { animation: orion-scan 2.5s ease-in-out infinite; }
+.slide-up     { animation: slide-up 0.35s cubic-bezier(0.16,1,0.3,1) both; }
+.fade-in      { animation: fade-in 0.25s ease both; }
 
-.scan-line {
-  animation: scan 2s linear infinite;
+/* ── Coach pause card pulse ring ─────────────────────────────────────────── */
+@keyframes pause-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+  70%  { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+.pause-ring { animation: pause-ring 1.5s ease infinite; }
+
+/* ── Mobile touch targets ────────────────────────────────────────────────── */
+@media (max-width: 1023px) {
+  button, a { min-height: 44px; }
+  input, textarea, select { font-size: 16px !important; }
 }
 
-@keyframes scan {
-  0% { top: 0%; opacity: 1; }
-  100% { top: 100%; opacity: 0; }
+/* ── Nav active indicator ────────────────────────────────────────────────── */
+.nav-active-dot {
+  position: absolute; bottom: -4px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 99px;
+  background: var(--orion-blue);
+  box-shadow: 0 0 6px var(--orion-blue);
 }
